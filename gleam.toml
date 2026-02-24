@@ -1,0 +1,14 @@
+name = "intldate"
+version = "1.0.0"
+target = "javascript"
+
+description = "Date formating for `gleam_time` powered by JavaScript `Intl.DateTimeFormat()`"
+licences = ["Apache-2.0"]
+repository = { type = "github", user = "gungun974", repo = "gleam_intldate" }
+
+[dependencies]
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+gleam_time = ">= 1.7.0 and < 2.0.0"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"
