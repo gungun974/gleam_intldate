@@ -5,6 +5,7 @@ Date formating for `gleam_time` powered by JavaScript `Intl.DateTimeFormat()`
 ***Only work for JavaScript runtime***
 
 [![Package Version](https://img.shields.io/hexpm/v/intldate)](https://hex.pm/packages/intldate)
+[![JavaScript Compatible](https://img.shields.io/badge/target-javascript-f3e155)](https://en.wikipedia.org/wiki/JavaScript)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/intldate/)
 
 ```sh
