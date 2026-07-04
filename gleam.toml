@@ -1,14 +1,16 @@
 name = "intldate"
-version = "1.0.0"
-target = "javascript"
+version = "2.0.0"
 
-description = "Date formating for `gleam_time` powered by JavaScript `Intl.DateTimeFormat()`"
+description = "Date formatting for `gleam_time` following the `Intl.DateTimeFormat()` API, on both JavaScript and Erlang"
 licences = ["Apache-2.0"]
 repository = { type = "github", user = "gungun974", repo = "gleam_intldate" }
 
 [dependencies]
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
 gleam_time = ">= 1.7.0 and < 2.0.0"
+tzif = ">= 1.1.2 and < 2.0.0"
+zones = ">= 1.26020.0 and < 2.0.0"
+pocket_watch = ">= 2.0.0 and < 3.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

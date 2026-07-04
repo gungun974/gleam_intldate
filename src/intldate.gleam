@@ -1,20 +1,19 @@
-//// Date formatting for `gleam_time` powered by JavaScript's `Intl.DateTimeFormat()`.
+//// Date formatting for `gleam_time` following the JavaScript `Intl.DateTimeFormat()` API.
 ////
-//// This module provides a type-safe wrapper around the Intl.DateTimeFormat API,
+//// This module provides a type-safe wrapper around the `Intl.DateTimeFormat` API,
 //// allowing you to format dates and times according to locale-specific conventions.
 ////
-//// **Only works for JavaScript runtime**
+//// **Works on both the JavaScript and Erlang runtimes.** On JavaScript it delegates to
+//// the native `Intl.DateTimeFormat()`, while on Erlang it uses a pure Gleam
+//// reimplementation that mirrors the same behaviour, so the output stays consistent
+//// whichever target you compile to.
 
 import gleam/option.{type Option, None, Some}
 import gleam/time/timestamp
-
-@external(javascript, "./intldate.ffi.mjs", "formatTimestamp")
-fn do_format_timestamp(
-  unix_timestamp: Int,
-  time_zone: Option(String),
-  locale: Option(String),
-  config: DateTimeFormatConfig,
-) -> String
+import intldate/internal/chronology
+import intldate/internal/locale
+import intldate/internal/renderer
+import intldate/internal/time
 
 /// Format a timestamp according to the specified locale and configuration.
 ///
@@ -32,9 +31,9 @@ fn do_format_timestamp(
 /// This function depends directly on the `timestamp` module and not `calendar` from `gleam_time` because Calendar
 /// represents a day and time separately without any timezone information, and the built-in timestamp to calendar
 /// conversion in `gleam_time` does not have complete support for time zones as described by IANA. Therefore, it can
-/// only represent time zones as offsets and does not take countries with daylight saving time into account. Since `Intl.DateTimeFormat`
-/// works directly with a date in UTC and uses the browser internals to resolve the time zone display, it is more
-/// logical to use a timestamp for this purpose.
+/// only represent time zones as offsets and does not take countries with daylight saving time into account. Since the
+/// `Intl.DateTimeFormat` model works directly with a date in UTC and resolves the time zone display from the IANA
+/// database, it is more logical to use a timestamp for this purpose.
 ///
 /// ## Example
 ///
@@ -66,13 +65,127 @@ pub fn format(
   locale locale: Option(String),
   config config: DateTimeFormatConfig,
 ) -> String {
-  let #(seconds, nanoseconds) = timestamp.to_unix_seconds_and_nanoseconds(date)
+  do_format(date, time_zone, locale, config)
+}
 
-  do_format_timestamp(
-    seconds * 1000 + nanoseconds / 1_000_000,
-    time_zone,
+@external(javascript, "./intldate.ffi.mjs", "formatTimestamp")
+fn do_format(
+  date: timestamp.Timestamp,
+  time_zone: Option(String),
+  locale: Option(String),
+  config: DateTimeFormatConfig,
+) -> String {
+  let locale = locale.load_locale(locale)
+
+  let #(date, time, is_dst, offset, zone_name) = time.resolve(date, time_zone)
+
+  renderer.render(
     locale,
-    config,
+    renderer.DateTimeFormatConfig(
+      calendar: option.map(config.calendar, fn(calendar_value) {
+        case calendar_value {
+          CalendarBuddhist -> chronology.CalendarBuddhist
+          CalendarChinese -> chronology.CalendarChinese
+          CalendarCoptic -> chronology.CalendarCoptic
+          CalendarDangi -> chronology.CalendarDangi
+          CalendarEthioaa -> chronology.CalendarEthioaa
+          CalendarEthiopic -> chronology.CalendarEthiopic
+          CalendarGregory -> chronology.CalendarGregory
+          CalendarHebrew -> chronology.CalendarHebrew
+          CalendarIndian -> chronology.CalendarIndian
+          CalendarIslamic -> chronology.CalendarIslamic
+          CalendarIslamicUmalqura -> chronology.CalendarIslamicUmalqura
+          CalendarIslamicTbla -> chronology.CalendarIslamicTbla
+          CalendarIslamicCivil -> chronology.CalendarIslamicCivil
+          CalendarIslamicRgsa -> chronology.CalendarIslamicRgsa
+          CalendarIso8601 -> chronology.CalendarIso8601
+          CalendarJapanese -> chronology.CalendarJapanese
+          CalendarPersian -> chronology.CalendarPersian
+          CalendarRoc -> chronology.CalendarRoc
+        }
+      }),
+      weekday: option.map(config.weekday, fn(weekday_value) {
+        case weekday_value {
+          WeekdayLong -> renderer.StyleLong
+          WeekdayShort -> renderer.StyleShort
+          WeekdayNarrow -> renderer.StyleNarrow
+        }
+      }),
+      era: option.map(config.era, fn(era_value) {
+        case era_value {
+          EraLong -> renderer.StyleLong
+          EraShort -> renderer.StyleShort
+          EraNarrow -> renderer.StyleNarrow
+        }
+      }),
+      year: option.map(config.year, fn(year_variant) {
+        case year_variant {
+          YearNumeric -> renderer.StyleNumeric
+          Year2Digit -> renderer.StyleTwoDigit
+        }
+      }),
+      month: option.map(config.month, fn(month_variant) {
+        case month_variant {
+          MonthNumeric -> renderer.StyleNumeric
+          Month2Digit -> renderer.StyleTwoDigit
+          MonthLong -> renderer.StyleLong
+          MonthShort -> renderer.StyleShort
+          MonthNarrow -> renderer.StyleNarrow
+        }
+      }),
+      day: option.map(config.day, fn(day_variant) {
+        case day_variant {
+          DayNumeric -> renderer.StyleNumeric
+          Day2Digit -> renderer.StyleTwoDigit
+        }
+      }),
+      hour: option.map(config.hour, fn(hour_variant) {
+        case hour_variant {
+          HourNumeric -> renderer.StyleNumeric
+          Hour2Digit -> renderer.StyleTwoDigit
+        }
+      }),
+      minute: option.map(config.minute, fn(minute_variant) {
+        case minute_variant {
+          MinuteNumeric -> renderer.StyleNumeric
+          Minute2Digit -> renderer.StyleTwoDigit
+        }
+      }),
+      second: option.map(config.second, fn(second_variant) {
+        case second_variant {
+          SecondNumeric -> renderer.StyleNumeric
+          Second2Digit -> renderer.StyleTwoDigit
+        }
+      }),
+      time_zone_name: option.map(
+        config.time_zone_name,
+        fn(time_zone_name_value) {
+          case time_zone_name_value {
+            TimeZoneNameShort -> renderer.TimeZoneNameShort
+            TimeZoneNameLong -> renderer.TimeZoneNameLong
+            TimeZoneNameShortOffset -> renderer.TimeZoneNameShortOffset
+            TimeZoneNameLongOffset -> renderer.TimeZoneNameLongOffset
+            TimeZoneNameShortGeneric -> renderer.TimeZoneNameShortGeneric
+            TimeZoneNameLongGeneric -> renderer.TimeZoneNameLongGeneric
+          }
+        },
+      ),
+      format_matcher: option.map(
+        config.format_matcher,
+        fn(format_matcher_value) {
+          case format_matcher_value {
+            FormatMatcherBestFit -> renderer.FormatMatcherBestFit
+            FormatMatcherBasic -> renderer.FormatMatcherBasic
+          }
+        },
+      ),
+      hour12: config.hour12,
+    ),
+    date,
+    time,
+    is_dst,
+    offset,
+    zone_name,
   )
 }
 
@@ -85,6 +198,48 @@ pub fn format(
 pub type LocaleMatcher {
   LocaleMatcherBestFit
   LocaleMatcherLookup
+}
+
+/// The calendar system to use for date formatting.
+///
+/// - `CalendarBuddhist`: Buddhist calendar
+/// - `CalendarChinese`: Chinese calendar
+/// - `CalendarCoptic`: Coptic calendar
+/// - `CalendarDangi`: Dangi calendar (Korean)
+/// - `CalendarEthioaa`: Ethiopic Amete Alem calendar
+/// - `CalendarEthiopic`: Ethiopic calendar
+/// - `CalendarGregory`: Gregorian calendar
+/// - `CalendarHebrew`: Hebrew calendar
+/// - `CalendarIndian`: Indian national calendar
+/// - `CalendarIslamic`: Islamic calendar
+/// - `CalendarIslamicUmalqura`: Islamic calendar (Umm al-Qura)
+/// - `CalendarIslamicTbla`: Islamic calendar (tabular, astronomical epoch)
+/// - `CalendarIslamicCivil`: Islamic calendar (tabular, civil epoch)
+/// - `CalendarIslamicRgsa`: Islamic calendar (Saudi Arabia sighting)
+/// - `CalendarIso8601`: ISO 8601 calendar (Gregorian with ISO week numbering)
+/// - `CalendarJapanese`: Japanese imperial calendar
+/// - `CalendarPersian`: Persian calendar
+/// - `CalendarRoc`: Republic of China calendar
+///
+pub type Calendar {
+  CalendarBuddhist
+  CalendarChinese
+  CalendarCoptic
+  CalendarDangi
+  CalendarEthioaa
+  CalendarEthiopic
+  CalendarGregory
+  CalendarHebrew
+  CalendarIndian
+  CalendarIslamic
+  CalendarIslamicUmalqura
+  CalendarIslamicTbla
+  CalendarIslamicCivil
+  CalendarIslamicRgsa
+  CalendarIso8601
+  CalendarJapanese
+  CalendarPersian
+  CalendarRoc
 }
 
 /// The representation of the weekday.
@@ -218,6 +373,7 @@ pub type FormatMatcher {
 pub type DateTimeFormatConfig {
   DateTimeFormatConfig(
     locale_matcher: Option(LocaleMatcher),
+    calendar: Option(Calendar),
     weekday: Option(Weekday),
     era: Option(Era),
     year: Option(Year),
@@ -248,6 +404,7 @@ pub type DateTimeFormatConfig {
 pub fn new() -> DateTimeFormatConfig {
   DateTimeFormatConfig(
     locale_matcher: None,
+    calendar: None,
     weekday: None,
     era: None,
     year: None,
@@ -274,6 +431,15 @@ pub fn with_locale_matcher(
   DateTimeFormatConfig(..config, locale_matcher: Some(locale_matcher))
 }
 
+/// Set the calendar system to use for date formatting.
+///
+pub fn with_calendar(
+  config: DateTimeFormatConfig,
+  calendar: Calendar,
+) -> DateTimeFormatConfig {
+  DateTimeFormatConfig(..config, calendar: Some(calendar))
+}
+
 /// Set the representation of the weekday.
 ///
 pub fn with_weekday(
@@ -285,7 +451,10 @@ pub fn with_weekday(
 
 /// Set the representation of the era.
 ///
-pub fn with_era(config: DateTimeFormatConfig, era: Era) -> DateTimeFormatConfig {
+pub fn with_era(
+  config: DateTimeFormatConfig,
+  era: Era,
+) -> DateTimeFormatConfig {
   DateTimeFormatConfig(..config, era: Some(era))
 }
 
@@ -309,7 +478,10 @@ pub fn with_month(
 
 /// Set the representation of the day.
 ///
-pub fn with_day(config: DateTimeFormatConfig, day: Day) -> DateTimeFormatConfig {
+pub fn with_day(
+  config: DateTimeFormatConfig,
+  day: Day,
+) -> DateTimeFormatConfig {
   DateTimeFormatConfig(..config, day: Some(day))
 }
 

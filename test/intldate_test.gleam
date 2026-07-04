@@ -651,3 +651,329 @@ pub fn format_empty_config_test() {
 
   assert result == "2/24/2026"
 }
+
+pub fn format_with_calendar_gregory_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("en-US"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarGregory)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "February 24, 2026"
+}
+
+pub fn format_with_calendar_japanese_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("ja-JP"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarJapanese)
+        |> intldate.with_era(intldate.EraLong)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthNumeric)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "令和8/2/24"
+}
+
+pub fn format_with_calendar_buddhist_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("th-TH"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarBuddhist)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthNumeric)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "24/2/2569"
+}
+
+pub fn format_with_calendar_hebrew_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("he-IL"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarHebrew)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "7 באדר 5786"
+}
+
+pub fn format_with_calendar_persian_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("fa-IR"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarPersian)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "۵ اسفند ۱۴۰۴"
+}
+
+pub fn format_with_calendar_islamic_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("ar-SA"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarIslamic)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "٧ رمضان ١٤٤٧ هـ"
+}
+
+pub fn format_with_calendar_islamic_umalqura_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("ar-SA"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarIslamicUmalqura)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "٧ رمضان ١٤٤٧ هـ"
+}
+
+pub fn format_with_calendar_islamic_tbla_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("en-US"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarIslamicTbla)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "Ramadan 8, 1447 AH"
+}
+
+pub fn format_with_calendar_islamic_civil_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("en-US"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarIslamicCivil)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "Ramadan 7, 1447 AH"
+}
+
+pub fn format_with_calendar_islamic_rgsa_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("ar-SA"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarIslamicRgsa)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "٧ رمضان ١٤٤٧ هـ"
+}
+
+pub fn format_with_calendar_roc_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("zh-TW"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarRoc)
+        |> intldate.with_era(intldate.EraLong)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthNumeric)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "民國115/2/24"
+}
+
+pub fn format_with_calendar_chinese_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("zh-CN"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarChinese)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "2026丙午年正月8"
+}
+
+pub fn format_with_calendar_dangi_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("ko-KR"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarDangi)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "2026년(병오년) 1월 8일"
+}
+
+pub fn format_with_calendar_indian_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("hi-IN"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarIndian)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "5 फाल्गुन 1947 शक"
+}
+
+pub fn format_with_calendar_coptic_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("en-US"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarCoptic)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "Amshir 17, 1742 AM"
+}
+
+pub fn format_with_calendar_ethiopic_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("am-ET"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarEthiopic)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "17 የካቲት 2018"
+}
+
+pub fn format_with_calendar_ethioaa_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("en-US"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarEthioaa)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "Yekatit 17, 7518 AA"
+}
+
+pub fn format_with_calendar_iso8601_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  let result =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("en-US"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarIso8601)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthNumeric)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  assert result == "2026-02-24"
+}

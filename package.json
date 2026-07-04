@@ -1,0 +1,27 @@
+{
+  "type": "commonjs",
+  "scripts": {
+    "generate": "pnpm run generate:locale && pnpm run generate:chinese",
+    "generate:locale": "node scripts/generate.mjs",
+    "generate:chinese": "node scripts/chinese.mjs",
+    "clean": "rm -rf priv/locale priv/chinese.etf"
+  },
+  "devDependencies": {
+    "wetf": "^0.9.14",
+    "cldr-cal-buddhist-full": "48.1.0",
+    "cldr-cal-chinese-full": "48.1.0",
+    "cldr-cal-coptic-full": "48.1.0",
+    "cldr-cal-dangi-full": "48.1.0",
+    "cldr-cal-ethiopic-full": "48.1.0",
+    "cldr-cal-hebrew-full": "48.1.0",
+    "cldr-cal-indian-full": "48.1.0",
+    "cldr-cal-islamic-full": "48.1.0",
+    "cldr-cal-japanese-full": "48.1.0",
+    "cldr-cal-persian-full": "48.1.0",
+    "cldr-cal-roc-full": "48.1.0",
+    "cldr-core": "48.1.0",
+    "cldr-dates-full": "48.1.0",
+    "cldr-numbers-full": "48.1.0",
+    "fast-glob": "^3.3.3"
+  }
+}

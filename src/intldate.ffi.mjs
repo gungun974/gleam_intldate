@@ -1,7 +1,26 @@
 import { Option$isSome, Option$Some$0 } from "../gleam_stdlib/gleam/option.mjs";
+import * as $timestamp from "../gleam_time/gleam/time/timestamp.mjs";
 import {
   LocaleMatcher$isLocaleMatcherBestFit,
   LocaleMatcher$isLocaleMatcherLookup,
+  Calendar$isCalendarBuddhist,
+  Calendar$isCalendarChinese,
+  Calendar$isCalendarCoptic,
+  Calendar$isCalendarDangi,
+  Calendar$isCalendarEthioaa,
+  Calendar$isCalendarEthiopic,
+  Calendar$isCalendarGregory,
+  Calendar$isCalendarHebrew,
+  Calendar$isCalendarIndian,
+  Calendar$isCalendarIslamic,
+  Calendar$isCalendarIslamicUmalqura,
+  Calendar$isCalendarIslamicTbla,
+  Calendar$isCalendarIslamicCivil,
+  Calendar$isCalendarIslamicRgsa,
+  Calendar$isCalendarIso8601,
+  Calendar$isCalendarJapanese,
+  Calendar$isCalendarPersian,
+  Calendar$isCalendarRoc,
   Weekday$isWeekdayLong,
   Weekday$isWeekdayShort,
   Weekday$isWeekdayNarrow,
@@ -32,6 +51,7 @@ import {
   FormatMatcher$isFormatMatcherBestFit,
   FormatMatcher$isFormatMatcherBasic,
   DateTimeFormatConfig$DateTimeFormatConfig$locale_matcher,
+  DateTimeFormatConfig$DateTimeFormatConfig$calendar,
   DateTimeFormatConfig$DateTimeFormatConfig$weekday,
   DateTimeFormatConfig$DateTimeFormatConfig$era,
   DateTimeFormatConfig$DateTimeFormatConfig$year,
@@ -45,9 +65,10 @@ import {
   DateTimeFormatConfig$DateTimeFormatConfig$hour12,
 } from "./intldate.mjs";
 
-export function formatTimestamp(unixTimestamp, timeZone, locale, config) {
+export function formatTimestamp(timestamp, timeZone, locale, config) {
   const locale_matcher =
     DateTimeFormatConfig$DateTimeFormatConfig$locale_matcher(config);
+  const calendar = DateTimeFormatConfig$DateTimeFormatConfig$calendar(config);
   const weekday = DateTimeFormatConfig$DateTimeFormatConfig$weekday(config);
   const era = DateTimeFormatConfig$DateTimeFormatConfig$era(config);
   const year = DateTimeFormatConfig$DateTimeFormatConfig$year(config);
@@ -71,6 +92,67 @@ export function formatTimestamp(unixTimestamp, timeZone, locale, config) {
         break;
       case LocaleMatcher$isLocaleMatcherLookup(value):
         localeMatcher = "lookup";
+        break;
+    }
+  }
+
+  let calendarValue = undefined;
+  if (Option$isSome(calendar)) {
+    const value = Option$Some$0(calendar);
+    switch (true) {
+      case Calendar$isCalendarBuddhist(value):
+        calendarValue = "buddhist";
+        break;
+      case Calendar$isCalendarChinese(value):
+        calendarValue = "chinese";
+        break;
+      case Calendar$isCalendarCoptic(value):
+        calendarValue = "coptic";
+        break;
+      case Calendar$isCalendarDangi(value):
+        calendarValue = "dangi";
+        break;
+      case Calendar$isCalendarEthioaa(value):
+        calendarValue = "ethioaa";
+        break;
+      case Calendar$isCalendarEthiopic(value):
+        calendarValue = "ethiopic";
+        break;
+      case Calendar$isCalendarGregory(value):
+        calendarValue = "gregory";
+        break;
+      case Calendar$isCalendarHebrew(value):
+        calendarValue = "hebrew";
+        break;
+      case Calendar$isCalendarIndian(value):
+        calendarValue = "indian";
+        break;
+      case Calendar$isCalendarIslamic(value):
+        calendarValue = "islamic";
+        break;
+      case Calendar$isCalendarIslamicUmalqura(value):
+        calendarValue = "islamic-umalqura";
+        break;
+      case Calendar$isCalendarIslamicTbla(value):
+        calendarValue = "islamic-tbla";
+        break;
+      case Calendar$isCalendarIslamicCivil(value):
+        calendarValue = "islamic-civil";
+        break;
+      case Calendar$isCalendarIslamicRgsa(value):
+        calendarValue = "islamic-rgsa";
+        break;
+      case Calendar$isCalendarIso8601(value):
+        calendarValue = "iso8601";
+        break;
+      case Calendar$isCalendarJapanese(value):
+        calendarValue = "japanese";
+        break;
+      case Calendar$isCalendarPersian(value):
+        calendarValue = "persian";
+        break;
+      case Calendar$isCalendarRoc(value):
+        calendarValue = "roc";
         break;
     }
   }
@@ -232,13 +314,17 @@ export function formatTimestamp(unixTimestamp, timeZone, locale, config) {
     }
   }
 
-  const date = new Date(unixTimestamp);
+  const unix = $timestamp.to_unix_seconds_and_nanoseconds(timestamp);
+  const seconds = unix[0];
+  const nanoseconds = unix[1];
+  const date = new Date(seconds * 1000 + Math.trunc(nanoseconds / 1_000_000));
   const localeStr = Option$isSome(locale) ? Option$Some$0(locale) : undefined;
   const timeZoneStr = Option$isSome(timeZone)
     ? Option$Some$0(timeZone)
     : undefined;
   const formatter = new Intl.DateTimeFormat(localeStr, {
     localeMatcher,
+    calendar: calendarValue,
     weekday: weekdayValue,
     era: eraValue,
     year: yearValue,

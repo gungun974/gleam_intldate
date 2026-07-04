@@ -1,15 +1,20 @@
 # intldate
 
-Date formating for `gleam_time` powered by JavaScript `Intl.DateTimeFormat()`
+Date formatting for `gleam_time` following the JavaScript `Intl.DateTimeFormat()` API
 
-***Only work for JavaScript runtime***
+***Works on both the JavaScript and Erlang runtimes***
+
+On JavaScript it delegates to the native `Intl.DateTimeFormat()`, while on Erlang
+it relies on a pure Gleam reimplementation that mirrors the same behaviour, so you
+get consistent results whichever target you compile to.
 
 [![Package Version](https://img.shields.io/hexpm/v/intldate)](https://hex.pm/packages/intldate)
 [![JavaScript Compatible](https://img.shields.io/badge/target-javascript-f3e155)](https://en.wikipedia.org/wiki/JavaScript)
+[![Erlang Compatible](https://img.shields.io/badge/target-erlang-a90533)](https://www.erlang.org/)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/intldate/)
 
 ```sh
-gleam add intldate@1
+gleam add intldate@2
 ```
 ```gleam
 import gleam/option
