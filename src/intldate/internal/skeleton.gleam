@@ -207,9 +207,6 @@ fn match_skeleton_result(
         }),
       )
 
-    pattern.Quarter | pattern.StandAloneQuarter ->
-      panic as "`w/Q` (quarter) patterns are not supported"
-
     pattern.Month | pattern.StandAloneMonth ->
       MatchResult(
         ..match_result,
@@ -221,9 +218,6 @@ fn match_skeleton_result(
           _ -> MonthNarrow
         }),
       )
-
-    pattern.WeekOfYear | pattern.WeekOfMonth ->
-      panic as "`w/W` (week of year) patterns are not supported"
 
     pattern.DayOfMonth ->
       MatchResult(
@@ -297,11 +291,6 @@ fn match_skeleton_result(
         }),
       )
 
-    pattern.PreferredHour
-    | pattern.PreferredHourNoPeriod
-    | pattern.FlexibleHour ->
-      panic as "`j/J/C` (hour) patterns are not supported, use `h/H/K/k` instead"
-
     pattern.Minute ->
       MatchResult(
         ..match_result,
@@ -348,11 +337,7 @@ fn match_skeleton_placeholder(field: pattern.Pattern) -> String {
     pattern.RelatedGregorianYear -> "{relatedYear}"
     pattern.CyclicYearName -> "{yearName}"
     pattern.CalendarYear | pattern.WeekYear | pattern.ExtendedYear -> "{year}"
-    pattern.Quarter | pattern.StandAloneQuarter ->
-      panic as "`w/Q` (quarter) patterns are not supported"
     pattern.Month | pattern.StandAloneMonth -> "{month}"
-    pattern.WeekOfYear | pattern.WeekOfMonth ->
-      panic as "`w/W` (week of year) patterns are not supported"
     pattern.DayOfMonth
     | pattern.DayOfYear
     | pattern.DayOfWeekInMonth
@@ -363,10 +348,6 @@ fn match_skeleton_placeholder(field: pattern.Pattern) -> String {
       "{ampm}"
     pattern.Hour12 | pattern.Hour24 | pattern.Hour11 | pattern.Hour24From1 ->
       "{hour}"
-    pattern.PreferredHour
-    | pattern.PreferredHourNoPeriod
-    | pattern.FlexibleHour ->
-      panic as "`j/J/C` (hour) patterns are not supported, use `h/H/K/k` instead"
     pattern.Minute -> "{minute}"
     pattern.Second | pattern.FractionalSecond | pattern.MillisecondsInDay ->
       "{second}"
@@ -391,7 +372,7 @@ fn skeleton_token_to_table2(c: String) -> Table2Key {
     "h" | "H" | "K" | "k" -> Table2Hour
     "m" -> Table2Minute
     "s" | "S" | "A" -> Table2Second
-    _ -> panic as "Invalid range pattern token"
+    _ -> Table2Default
   }
 }
 
