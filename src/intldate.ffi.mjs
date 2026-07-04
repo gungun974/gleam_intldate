@@ -1,5 +1,6 @@
 import { Option$isSome, Option$Some$0 } from "../gleam_stdlib/gleam/option.mjs";
 import * as $timestamp from "../gleam_time/gleam/time/timestamp.mjs";
+import { Result$Ok, Result$Error } from "./gleam.mjs";
 import {
   LocaleMatcher$isLocaleMatcherBestFit,
   LocaleMatcher$isLocaleMatcherLookup,
@@ -50,6 +51,10 @@ import {
   TimeZoneName$isTimeZoneNameLongGeneric,
   FormatMatcher$isFormatMatcherBestFit,
   FormatMatcher$isFormatMatcherBasic,
+  IntlError$FailedToLoadLocale,
+  IntlError$FailedToLoadCalendar,
+  IntlError$FailedToLoadTimeZone,
+  IntlError$Unknown,
   DateTimeFormatConfig$DateTimeFormatConfig$locale_matcher,
   DateTimeFormatConfig$DateTimeFormatConfig$calendar,
   DateTimeFormatConfig$DateTimeFormatConfig$weekday,
@@ -322,22 +327,55 @@ export function formatTimestamp(timestamp, timeZone, locale, config) {
   const timeZoneStr = Option$isSome(timeZone)
     ? Option$Some$0(timeZone)
     : undefined;
-  const formatter = new Intl.DateTimeFormat(localeStr, {
-    localeMatcher,
-    calendar: calendarValue,
-    weekday: weekdayValue,
-    era: eraValue,
-    year: yearValue,
-    month: monthValue,
-    day: dayValue,
-    hour: hourValue,
-    minute: minuteValue,
-    second: secondValue,
-    timeZoneName: timeZoneNameValue,
-    formatMatcher: formatMatcherValue,
-    hour12: Option$isSome(hour12) ? Option$Some$0(hour12) : undefined,
-    timeZone: timeZoneStr,
-  });
 
-  return formatter.format(date);
+  if (
+    localeStr &&
+    Intl.DateTimeFormat.supportedLocalesOf([localeStr]).length === 0
+  ) {
+    return Result$Error(IntlError$FailedToLoadLocale(localeStr));
+  }
+
+  try {
+    const formatter = new Intl.DateTimeFormat(localeStr, {
+      localeMatcher,
+      calendar: calendarValue,
+      weekday: weekdayValue,
+      era: eraValue,
+      year: yearValue,
+      month: monthValue,
+      day: dayValue,
+      hour: hourValue,
+      minute: minuteValue,
+      second: secondValue,
+      timeZoneName: timeZoneNameValue,
+      formatMatcher: formatMatcherValue,
+      hour12: Option$isSome(hour12) ? Option$Some$0(hour12) : undefined,
+      timeZone: timeZoneStr,
+    });
+
+    return Result$Ok(formatter.format(date));
+  } catch (error) {
+    return Result$Error(
+      castError(error, { localeStr, timeZoneStr, calendarValue }),
+    );
+  }
+}
+
+function castError(error, context) {
+  const message =
+    error instanceof Error && error.message ? error.message : String(error);
+
+  if (context.timeZoneStr && message.includes(context.timeZoneStr)) {
+    return IntlError$FailedToLoadTimeZone(context.timeZoneStr);
+  }
+
+  if (context.localeStr && message.includes(context.localeStr)) {
+    return IntlError$FailedToLoadLocale(context.localeStr);
+  }
+
+  if (context.calendarValue && message.includes(context.calendarValue)) {
+    return IntlError$FailedToLoadCalendar(context.calendarValue);
+  }
+
+  return IntlError$Unknown(message);
 }

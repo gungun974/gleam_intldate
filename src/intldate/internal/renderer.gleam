@@ -530,7 +530,7 @@ pub fn render(
   is_dst: Bool,
   offset: duration.Duration,
   zone_name: String,
-) -> String {
+) -> Result(String, Nil) {
   let config = apply_defaults(config)
 
   let hour_cycle = resolve_hour_cycle(locale.hour_cycle, config.hour12)
@@ -558,7 +558,7 @@ pub fn render(
   }
 
   case calendar {
-    Error(_) -> "error loading calendar"
+    Error(_) -> Error(Nil)
     Ok(calendar) -> {
       let #(best, resolved) = case config.format_matcher {
         Some(FormatMatcherBasic) -> {
@@ -582,7 +582,7 @@ pub fn render(
       let month = calendar.month_to_int(month)
       let weekday = day_of_week(year, month, day)
 
-      case calendar.calendar {
+      Ok(case calendar.calendar {
         CalendarIso8601 ->
           int.to_string(year)
           <> "-"
@@ -642,7 +642,7 @@ pub fn render(
             ),
           )
         }
-      }
+      })
     }
   }
 }

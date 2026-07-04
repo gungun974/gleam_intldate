@@ -65,128 +65,213 @@ pub fn format(
   locale locale: Option(String),
   config config: DateTimeFormatConfig,
 ) -> String {
-  do_format(date, time_zone, locale, config)
+  case raw_format(date, time_zone, locale, config) {
+    Ok(formatted) -> formatted
+    Error(error) -> describe_error(error)
+  }
+}
+
+pub type IntlError {
+  /// The requested time zone could not be loaded or resolved.
+  FailedToLoadTimeZone(inner: String)
+  /// The requested locale could not be loaded or resolved.
+  FailedToLoadLocale(inner: String)
+  /// The requested calendar could not be loaded or resolved.
+  FailedToLoadCalendar(inner: String)
+  /// The system local time zone could not be detected.
+  SystemTimeZoneUnavailable
+  /// Any error not accounted for by this type.
+  Unknown(inner: String)
+}
+
+/// Convert an error into a human-readable description.
+///
+/// ## Example
+/// ```gleam
+/// let assert "Failed to load time zone: Invalid/TimeZone" =
+///   describe_error(FailedToLoadTimeZone("Invalid/TimeZone"))
+/// ```
+///
+pub fn describe_error(error: IntlError) -> String {
+  case error {
+    FailedToLoadTimeZone(inner) -> "Failed to load time zone: " <> inner
+    FailedToLoadLocale(inner) -> "Failed to load locale: " <> inner
+    FailedToLoadCalendar(inner) -> "Failed to load calendar: " <> inner
+    SystemTimeZoneUnavailable -> "System time zone unavailable"
+    Unknown(inner) -> "Unknown error: " <> inner
+  }
+}
+
+pub fn try_format(
+  date date: timestamp.Timestamp,
+  time_zone time_zone: Option(String),
+  locale locale: Option(String),
+  config config: DateTimeFormatConfig,
+) -> Result(String, IntlError) {
+  raw_format(date, time_zone, locale, config)
 }
 
 @external(javascript, "./intldate.ffi.mjs", "formatTimestamp")
-fn do_format(
+fn raw_format(
   date: timestamp.Timestamp,
   time_zone: Option(String),
   locale: Option(String),
   config: DateTimeFormatConfig,
-) -> String {
-  let locale = locale.load_locale(locale)
-
-  let #(date, time, is_dst, offset, zone_name) = time.resolve(date, time_zone)
-
-  renderer.render(
-    locale,
-    renderer.DateTimeFormatConfig(
-      calendar: option.map(config.calendar, fn(calendar_value) {
-        case calendar_value {
-          CalendarBuddhist -> chronology.CalendarBuddhist
-          CalendarChinese -> chronology.CalendarChinese
-          CalendarCoptic -> chronology.CalendarCoptic
-          CalendarDangi -> chronology.CalendarDangi
-          CalendarEthioaa -> chronology.CalendarEthioaa
-          CalendarEthiopic -> chronology.CalendarEthiopic
-          CalendarGregory -> chronology.CalendarGregory
-          CalendarHebrew -> chronology.CalendarHebrew
-          CalendarIndian -> chronology.CalendarIndian
-          CalendarIslamic -> chronology.CalendarIslamic
-          CalendarIslamicUmalqura -> chronology.CalendarIslamicUmalqura
-          CalendarIslamicTbla -> chronology.CalendarIslamicTbla
-          CalendarIslamicCivil -> chronology.CalendarIslamicCivil
-          CalendarIslamicRgsa -> chronology.CalendarIslamicRgsa
-          CalendarIso8601 -> chronology.CalendarIso8601
-          CalendarJapanese -> chronology.CalendarJapanese
-          CalendarPersian -> chronology.CalendarPersian
-          CalendarRoc -> chronology.CalendarRoc
-        }
-      }),
-      weekday: option.map(config.weekday, fn(weekday_value) {
-        case weekday_value {
-          WeekdayLong -> renderer.StyleLong
-          WeekdayShort -> renderer.StyleShort
-          WeekdayNarrow -> renderer.StyleNarrow
-        }
-      }),
-      era: option.map(config.era, fn(era_value) {
-        case era_value {
-          EraLong -> renderer.StyleLong
-          EraShort -> renderer.StyleShort
-          EraNarrow -> renderer.StyleNarrow
-        }
-      }),
-      year: option.map(config.year, fn(year_variant) {
-        case year_variant {
-          YearNumeric -> renderer.StyleNumeric
-          Year2Digit -> renderer.StyleTwoDigit
-        }
-      }),
-      month: option.map(config.month, fn(month_variant) {
-        case month_variant {
-          MonthNumeric -> renderer.StyleNumeric
-          Month2Digit -> renderer.StyleTwoDigit
-          MonthLong -> renderer.StyleLong
-          MonthShort -> renderer.StyleShort
-          MonthNarrow -> renderer.StyleNarrow
-        }
-      }),
-      day: option.map(config.day, fn(day_variant) {
-        case day_variant {
-          DayNumeric -> renderer.StyleNumeric
-          Day2Digit -> renderer.StyleTwoDigit
-        }
-      }),
-      hour: option.map(config.hour, fn(hour_variant) {
-        case hour_variant {
-          HourNumeric -> renderer.StyleNumeric
-          Hour2Digit -> renderer.StyleTwoDigit
-        }
-      }),
-      minute: option.map(config.minute, fn(minute_variant) {
-        case minute_variant {
-          MinuteNumeric -> renderer.StyleNumeric
-          Minute2Digit -> renderer.StyleTwoDigit
-        }
-      }),
-      second: option.map(config.second, fn(second_variant) {
-        case second_variant {
-          SecondNumeric -> renderer.StyleNumeric
-          Second2Digit -> renderer.StyleTwoDigit
-        }
-      }),
-      time_zone_name: option.map(
-        config.time_zone_name,
-        fn(time_zone_name_value) {
-          case time_zone_name_value {
-            TimeZoneNameShort -> renderer.TimeZoneNameShort
-            TimeZoneNameLong -> renderer.TimeZoneNameLong
-            TimeZoneNameShortOffset -> renderer.TimeZoneNameShortOffset
-            TimeZoneNameLongOffset -> renderer.TimeZoneNameLongOffset
-            TimeZoneNameShortGeneric -> renderer.TimeZoneNameShortGeneric
-            TimeZoneNameLongGeneric -> renderer.TimeZoneNameLongGeneric
+) -> Result(String, IntlError) {
+  case locale.load_locale(locale) {
+    Error(_) -> Error(FailedToLoadLocale(locale |> option.unwrap("en")))
+    Ok(locale) ->
+      case time.resolve(date, time_zone) {
+        Error(_) ->
+          Error(case time_zone {
+            Some(zone_name) -> FailedToLoadTimeZone(zone_name)
+            None -> SystemTimeZoneUnavailable
+          })
+        Ok(#(date, time, is_dst, offset, zone_name)) ->
+          case
+            renderer.render(
+              locale,
+              renderer.DateTimeFormatConfig(
+                calendar: option.map(config.calendar, fn(calendar_value) {
+                  case calendar_value {
+                    CalendarBuddhist -> chronology.CalendarBuddhist
+                    CalendarChinese -> chronology.CalendarChinese
+                    CalendarCoptic -> chronology.CalendarCoptic
+                    CalendarDangi -> chronology.CalendarDangi
+                    CalendarEthioaa -> chronology.CalendarEthioaa
+                    CalendarEthiopic -> chronology.CalendarEthiopic
+                    CalendarGregory -> chronology.CalendarGregory
+                    CalendarHebrew -> chronology.CalendarHebrew
+                    CalendarIndian -> chronology.CalendarIndian
+                    CalendarIslamic -> chronology.CalendarIslamic
+                    CalendarIslamicUmalqura ->
+                      chronology.CalendarIslamicUmalqura
+                    CalendarIslamicTbla -> chronology.CalendarIslamicTbla
+                    CalendarIslamicCivil -> chronology.CalendarIslamicCivil
+                    CalendarIslamicRgsa -> chronology.CalendarIslamicRgsa
+                    CalendarIso8601 -> chronology.CalendarIso8601
+                    CalendarJapanese -> chronology.CalendarJapanese
+                    CalendarPersian -> chronology.CalendarPersian
+                    CalendarRoc -> chronology.CalendarRoc
+                  }
+                }),
+                weekday: option.map(config.weekday, fn(weekday_value) {
+                  case weekday_value {
+                    WeekdayLong -> renderer.StyleLong
+                    WeekdayShort -> renderer.StyleShort
+                    WeekdayNarrow -> renderer.StyleNarrow
+                  }
+                }),
+                era: option.map(config.era, fn(era_value) {
+                  case era_value {
+                    EraLong -> renderer.StyleLong
+                    EraShort -> renderer.StyleShort
+                    EraNarrow -> renderer.StyleNarrow
+                  }
+                }),
+                year: option.map(config.year, fn(year_variant) {
+                  case year_variant {
+                    YearNumeric -> renderer.StyleNumeric
+                    Year2Digit -> renderer.StyleTwoDigit
+                  }
+                }),
+                month: option.map(config.month, fn(month_variant) {
+                  case month_variant {
+                    MonthNumeric -> renderer.StyleNumeric
+                    Month2Digit -> renderer.StyleTwoDigit
+                    MonthLong -> renderer.StyleLong
+                    MonthShort -> renderer.StyleShort
+                    MonthNarrow -> renderer.StyleNarrow
+                  }
+                }),
+                day: option.map(config.day, fn(day_variant) {
+                  case day_variant {
+                    DayNumeric -> renderer.StyleNumeric
+                    Day2Digit -> renderer.StyleTwoDigit
+                  }
+                }),
+                hour: option.map(config.hour, fn(hour_variant) {
+                  case hour_variant {
+                    HourNumeric -> renderer.StyleNumeric
+                    Hour2Digit -> renderer.StyleTwoDigit
+                  }
+                }),
+                minute: option.map(config.minute, fn(minute_variant) {
+                  case minute_variant {
+                    MinuteNumeric -> renderer.StyleNumeric
+                    Minute2Digit -> renderer.StyleTwoDigit
+                  }
+                }),
+                second: option.map(config.second, fn(second_variant) {
+                  case second_variant {
+                    SecondNumeric -> renderer.StyleNumeric
+                    Second2Digit -> renderer.StyleTwoDigit
+                  }
+                }),
+                time_zone_name: option.map(
+                  config.time_zone_name,
+                  fn(time_zone_name_value) {
+                    case time_zone_name_value {
+                      TimeZoneNameShort -> renderer.TimeZoneNameShort
+                      TimeZoneNameLong -> renderer.TimeZoneNameLong
+                      TimeZoneNameShortOffset ->
+                        renderer.TimeZoneNameShortOffset
+                      TimeZoneNameLongOffset -> renderer.TimeZoneNameLongOffset
+                      TimeZoneNameShortGeneric ->
+                        renderer.TimeZoneNameShortGeneric
+                      TimeZoneNameLongGeneric ->
+                        renderer.TimeZoneNameLongGeneric
+                    }
+                  },
+                ),
+                format_matcher: option.map(
+                  config.format_matcher,
+                  fn(format_matcher_value) {
+                    case format_matcher_value {
+                      FormatMatcherBestFit -> renderer.FormatMatcherBestFit
+                      FormatMatcherBasic -> renderer.FormatMatcherBasic
+                    }
+                  },
+                ),
+                hour12: config.hour12,
+              ),
+              date,
+              time,
+              is_dst,
+              offset,
+              zone_name,
+            )
+          {
+            Ok(formatted) -> Ok(formatted)
+            Error(_) ->
+              Error(FailedToLoadCalendar(calendar_name(config.calendar)))
           }
-        },
-      ),
-      format_matcher: option.map(
-        config.format_matcher,
-        fn(format_matcher_value) {
-          case format_matcher_value {
-            FormatMatcherBestFit -> renderer.FormatMatcherBestFit
-            FormatMatcherBasic -> renderer.FormatMatcherBasic
-          }
-        },
-      ),
-      hour12: config.hour12,
-    ),
-    date,
-    time,
-    is_dst,
-    offset,
-    zone_name,
-  )
+      }
+  }
+}
+
+fn calendar_name(calendar: Option(Calendar)) -> String {
+  case calendar {
+    None -> "default"
+    Some(CalendarBuddhist) -> "buddhist"
+    Some(CalendarChinese) -> "chinese"
+    Some(CalendarCoptic) -> "coptic"
+    Some(CalendarDangi) -> "dangi"
+    Some(CalendarEthioaa) -> "ethioaa"
+    Some(CalendarEthiopic) -> "ethiopic"
+    Some(CalendarGregory) -> "gregory"
+    Some(CalendarHebrew) -> "hebrew"
+    Some(CalendarIndian) -> "indian"
+    Some(CalendarIslamic) -> "islamic"
+    Some(CalendarIslamicUmalqura) -> "islamic-umalqura"
+    Some(CalendarIslamicTbla) -> "islamic-tbla"
+    Some(CalendarIslamicCivil) -> "islamic-civil"
+    Some(CalendarIslamicRgsa) -> "islamic-rgsa"
+    Some(CalendarIso8601) -> "iso8601"
+    Some(CalendarJapanese) -> "japanese"
+    Some(CalendarPersian) -> "persian"
+    Some(CalendarRoc) -> "roc"
+  }
 }
 
 /// The locale matching algorithm to use.

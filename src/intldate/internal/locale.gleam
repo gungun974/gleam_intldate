@@ -564,7 +564,7 @@ fn load_locale_data(locale: String) -> Result(Dynamic, Nil) {
   Error(Nil)
 }
 
-pub fn load_locale(tag: Option(String)) -> Locale {
+pub fn load_locale(tag: Option(String)) -> Result(Locale, Nil) {
   load_first(case tag {
     None -> ["en"]
     Some(locale) -> {
@@ -573,50 +573,25 @@ pub fn load_locale(tag: Option(String)) -> Locale {
           locale,
           "zh-Hant",
           "zh",
-          "en",
         ]
         ["zh", region] if region == "CN" || region == "SG" || region == "MY" -> [
           locale,
           "zh-Hans",
           "zh",
-          "en",
         ]
-        [base, ..] -> [locale, base, "en"]
-        [] -> [locale, "en"]
+        [base, ..] -> [locale, base]
+        [] -> [locale]
       }
     }
   })
 }
 
-fn load_first(candidates: List(String)) -> Locale {
+fn load_first(candidates: List(String)) -> Result(Locale, Nil) {
   case candidates {
-    [] ->
-      Locale(
-        id: "",
-        am: "",
-        pm: "",
-        weekday: Weekday(
-          narrow: dict.new(),
-          short: dict.new(),
-          long: dict.new(),
-        ),
-        time_zone_name: dict.new(),
-        gmt_format: "",
-        hour_format: "",
-        date_time_connectors: DateTimeConnectors(
-          full: "",
-          long: "",
-          medium: "",
-          short: "",
-        ),
-        interval_format_fallback: None,
-        hour_cycle: H24,
-        default_calendar: chronology.CalendarGregory,
-        numbering_system: [],
-      )
+    [] -> Error(Nil)
     [candidate, ..rest] ->
       case load(candidate) {
-        Ok(loaded_locale) -> loaded_locale
+        Ok(loaded_locale) -> Ok(loaded_locale)
         Error(_) -> load_first(rest)
       }
   }

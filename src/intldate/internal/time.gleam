@@ -10,7 +10,10 @@ import zones
 pub fn resolve(
   date: timestamp.Timestamp,
   time_zone: Option(String),
-) -> #(calendar.Date, calendar.TimeOfDay, Bool, duration.Duration, String) {
+) -> Result(
+  #(calendar.Date, calendar.TimeOfDay, Bool, duration.Duration, String),
+  Nil,
+) {
   let time_zone = case time_zone {
     Some(_) -> time_zone
     None -> option.from_result(system_time_zone())
@@ -19,7 +22,7 @@ pub fn resolve(
   case time_zone {
     None -> {
       let #(date, time) = timestamp.to_calendar(date, duration.empty)
-      #(date, time, False, duration.empty, "UTC")
+      Ok(#(date, time, False, duration.empty, "UTC"))
     }
     Some(zone_name) -> {
       let db = zones.database()
@@ -28,12 +31,15 @@ pub fn resolve(
       case tzcalendar.to_time_and_zone(lookup, zone_name, db) {
         Ok(time_and_zone) -> {
           let #(date, time) = timestamp.to_calendar(date, time_and_zone.offset)
-          #(date, time, time_and_zone.is_dst, time_and_zone.offset, zone_name)
+          Ok(#(
+            date,
+            time,
+            time_and_zone.is_dst,
+            time_and_zone.offset,
+            zone_name,
+          ))
         }
-        Error(_) -> {
-          let #(date, time) = timestamp.to_calendar(date, duration.empty)
-          #(date, time, False, duration.empty, "UTC")
-        }
+        Error(_) -> Error(Nil)
       }
     }
   }
