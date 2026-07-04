@@ -42,6 +42,38 @@ pub fn main() {
 }
 ```
 
+## Error handling
+
+`intldate.format` never fails: if the time zone, locale, or calendar cannot be
+resolved, it returns a human-readable, English-only message describing the error
+(via `intldate.describe_error`), regardless of the requested locale.
+
+If you'd rather handle the error yourself, use `intldate.try_format`, which
+returns a `Result(String, intldate.IntlError)`:
+
+```gleam
+import gleam/option
+import gleam/time/timestamp
+import intldate
+
+pub fn main() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T17:48:22+04:00")
+
+  let result =
+    intldate.try_format(
+      date:,
+      time_zone: option.Some("Invalid/TimeZone"),
+      locale: option.Some("fr-FR"),
+      config: intldate.new()
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  // result == Error(intldate.FailedToLoadTimeZone("Invalid/TimeZone"))
+}
+```
+
 ## Time zone database on Erlang
 
 On Erlang, resolving a time zone requires an IANA `TzDatabase`. By default, `intldate`
