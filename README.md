@@ -103,3 +103,18 @@ This has no effect on JavaScript, where time zones are resolved by the native
 `Intl.DateTimeFormat()`.
 
 Further documentation can be found at <https://hexdocs.pm/intldate>.
+
+## Development
+
+The locale data under `priv/` is generated from the CLDR packages and is not
+committed, so you need to build it before running the tests:
+
+```sh
+git clone https://github.com/gungun974/gleam_intldate.git
+cd gleam_intldate
+
+pnpm install
+pnpm run generate
+
+gleam test
+```
