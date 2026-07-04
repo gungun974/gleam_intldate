@@ -198,7 +198,12 @@ fn raw_format(
   locale: Option(String),
   config: DateTimeFormatConfig,
 ) -> Result(String, IntlError) {
-  case locale.load_locale(locale) {
+  let locale_matcher = case config.locale_matcher {
+    Some(LocaleMatcherLookup) -> locale.Lookup
+    Some(LocaleMatcherBestFit) | None -> locale.BestFit
+  }
+
+  case locale.load_locale(locale, locale_matcher) {
     Error(_) -> Error(FailedToLoadLocale(locale |> option.unwrap("en")))
     Ok(locale) ->
       case time.resolve(date, time_zone) {

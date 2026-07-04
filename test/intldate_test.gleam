@@ -574,6 +574,38 @@ pub fn format_with_locale_matcher_lookup_test() {
   assert result == "Tuesday, 24 February 2026"
 }
 
+fn tz_name(locale: String, matcher: intldate.LocaleMatcher) -> String {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+
+  intldate.format(
+    date:,
+    time_zone: option.Some("America/Los_Angeles"),
+    locale: option.Some(locale),
+    config: intldate.new()
+      |> intldate.with_locale_matcher(matcher)
+      |> intldate.with_hour(intldate.HourNumeric)
+      |> intldate.with_minute(intldate.MinuteNumeric)
+      |> intldate.with_time_zone_name(intldate.TimeZoneNameLong)
+      |> intldate.with_hour12(False),
+  )
+}
+
+pub fn format_lookup_truncates_subtags_one_at_a_time_test() {
+  assert tz_name("zh-Hant-QQ", intldate.LocaleMatcherLookup)
+    == "05:48 [太平洋標準時間]"
+
+  assert tz_name("zh-Hant-QQ", intldate.LocaleMatcherBestFit)
+    == "05:48 [太平洋標準時間]"
+}
+
+pub fn format_locale_matcher_applies_likely_script_test() {
+  assert tz_name("zh-TW", intldate.LocaleMatcherLookup) == "05:48 [太平洋標準時間]"
+
+  assert tz_name("zh-TW", intldate.LocaleMatcherBestFit) == "05:48 [太平洋標準時間]"
+
+  assert tz_name("zh-CN", intldate.LocaleMatcherLookup) == "北美太平洋标准时间 05:48"
+}
+
 pub fn format_with_format_matcher_best_fit_test() {
   let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
 

@@ -564,26 +564,86 @@ fn load_locale_data(locale: String) -> Result(Dynamic, Nil) {
   Error(Nil)
 }
 
-pub fn load_locale(tag: Option(String)) -> Result(Locale, Nil) {
-  load_first(case tag {
+pub type LocaleMatcher {
+  Lookup
+  BestFit
+}
+
+pub fn load_locale(
+  tag: Option(String),
+  matcher: LocaleMatcher,
+) -> Result(Locale, Nil) {
+  load_first(candidate_locales(tag, matcher))
+}
+
+fn candidate_locales(
+  tag: Option(String),
+  matcher: LocaleMatcher,
+) -> List(String) {
+  case tag {
     None -> ["en"]
     Some(locale) -> {
-      case string.split(locale, "-") {
-        ["zh", region] if region == "TW" || region == "HK" || region == "MO" -> [
-          locale,
-          "zh-Hant",
-          "zh",
-        ]
-        ["zh", region] if region == "CN" || region == "SG" || region == "MY" -> [
-          locale,
-          "zh-Hans",
-          "zh",
-        ]
-        [base, ..] -> [locale, base]
-        [] -> [locale]
+      let subtags = string.split(locale, "-")
+      let fallbacks = lookup_truncations(subtags)
+      case matcher {
+        Lookup | BestFit ->
+          list.unique(augment_with_likely_subtags(subtags, fallbacks))
       }
     }
-  })
+  }
+}
+
+fn lookup_truncations(subtags: List(String)) -> List(String) {
+  case subtags {
+    [] -> []
+    [single] -> [single]
+    _ -> [
+      string.join(subtags, "-"),
+      ..lookup_truncations(drop_last_subtag(subtags))
+    ]
+  }
+}
+
+fn drop_last_subtag(subtags: List(String)) -> List(String) {
+  let without_last = list.take(subtags, list.length(subtags) - 1)
+  case list.last(without_last) {
+    Ok(subtag) ->
+      case string.length(subtag) == 1 {
+        True -> list.take(without_last, list.length(without_last) - 1)
+        False -> without_last
+      }
+    Error(_) -> without_last
+  }
+}
+
+fn augment_with_likely_subtags(
+  subtags: List(String),
+  fallbacks: List(String),
+) -> List(String) {
+  case likely_script_tag(subtags) {
+    None -> fallbacks
+    Some(script_tag) ->
+      case fallbacks {
+        [full, ..rest] -> [full, script_tag, ..rest]
+        [] -> [script_tag]
+      }
+  }
+}
+
+fn likely_script_tag(subtags: List(String)) -> Option(String) {
+  case subtags {
+    ["zh", ..rest] ->
+      case list.any(rest, fn(subtag) { string.length(subtag) == 4 }) {
+        True -> None
+        False ->
+          case list.find(rest, fn(subtag) { string.length(subtag) == 2 }) {
+            Ok("TW") | Ok("HK") | Ok("MO") -> Some("zh-Hant")
+            Ok("CN") | Ok("SG") | Ok("MY") -> Some("zh-Hans")
+            _ -> None
+          }
+      }
+    _ -> None
+  }
 }
 
 fn load_first(candidates: List(String)) -> Result(Locale, Nil) {
