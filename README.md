@@ -42,4 +42,32 @@ pub fn main() {
 }
 ```
 
+## Time zone database on Erlang
+
+On Erlang, resolving a time zone requires an IANA `TzDatabase`. By default, `intldate`
+tries to load one from the operating system (typically `/usr/share/zoneinfo`). If the
+OS has no such data, formatting fails with `FailedToLoadTimeZone`.
+
+To avoid depending on what is installed on the host machine, call
+`intldate.set_time_zone_database` once at startup with a database of your choice, for
+example the one bundled by the [`zones`](https://hex.pm/packages/zones) package, which
+ships a full copy of the IANA time zone database:
+
+```sh
+gleam add zones
+```
+```gleam
+import intldate
+import zones
+
+pub fn main() {
+  intldate.set_time_zone_database(zones.database())
+
+  // ... the rest of your application
+}
+```
+
+This has no effect on JavaScript, where time zones are resolved by the native
+`Intl.DateTimeFormat()`.
+
 Further documentation can be found at <https://hexdocs.pm/intldate>.

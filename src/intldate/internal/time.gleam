@@ -5,7 +5,6 @@ import gleam/time/duration
 import gleam/time/timestamp
 import tzif/database
 import tzif/tzcalendar
-import zones
 
 pub fn resolve(
   date: timestamp.Timestamp,
@@ -25,7 +24,7 @@ pub fn resolve(
       Ok(#(date, time, False, duration.empty, "UTC"))
     }
     Some(zone_name) -> {
-      let db = zones.database()
+      use db <- result.try(resolve_database())
 
       let lookup = timestamp.add(date, duration.seconds(leap_offset(date, db)))
       case tzcalendar.to_time_and_zone(lookup, zone_name, db) {
@@ -45,8 +44,33 @@ pub fn resolve(
   }
 }
 
+fn resolve_database() -> Result(database.TzDatabase, Nil) {
+  case get_default_time_zone_database() {
+    Some(db) -> Ok(db)
+    None -> database.load_from_os()
+  }
+}
+
+pub fn set_default_time_zone_database(db: database.TzDatabase) -> Nil {
+  ffi_set_default_time_zone_database(db)
+}
+
+fn get_default_time_zone_database() -> Option(database.TzDatabase) {
+  option.from_result(ffi_get_default_time_zone_database())
+}
+
 @external(erlang, "intldate_time_ffi", "system_time_zone")
 fn system_time_zone() -> Result(String, Nil) {
+  Error(Nil)
+}
+
+@external(erlang, "intldate_time_ffi", "set_default_time_zone_database")
+fn ffi_set_default_time_zone_database(_db: database.TzDatabase) -> Nil {
+  Nil
+}
+
+@external(erlang, "intldate_time_ffi", "get_default_time_zone_database")
+fn ffi_get_default_time_zone_database() -> Result(database.TzDatabase, Nil) {
   Error(Nil)
 }
 

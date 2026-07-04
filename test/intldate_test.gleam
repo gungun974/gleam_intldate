@@ -2,8 +2,10 @@ import gleam/option
 import gleam/time/timestamp
 import gleeunit
 import intldate
+import zones
 
 pub fn main() -> Nil {
+  intldate.set_time_zone_database(zones.database())
   gleeunit.main()
 }
 

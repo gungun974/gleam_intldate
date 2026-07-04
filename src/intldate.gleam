@@ -7,6 +7,18 @@
 //// the native `Intl.DateTimeFormat()`, while on Erlang it uses a pure Gleam
 //// reimplementation that mirrors the same behaviour, so the output stays consistent
 //// whichever target you compile to.
+////
+//// ## Time zone database on Erlang
+////
+//// On Erlang, resolving a time zone requires an IANA `TzDatabase`. By default this
+//// library tries to load one from the operating system (typically
+//// `/usr/share/zoneinfo`). If the OS has no such data, formatting fails with
+//// `FailedToLoadTimeZone`.
+////
+//// You can avoid depending on the OS entirely by calling `set_time_zone_database`
+//// once at startup with a database of your choice, for example the one bundled by the
+//// [`zones`](https://hex.pm/packages/zones) package, which ships a full copy of the IANA
+//// time zone database so it works the same on every machine.
 
 import gleam/option.{type Option, None, Some}
 import gleam/time/timestamp
@@ -14,6 +26,7 @@ import intldate/internal/chronology
 import intldate/internal/locale
 import intldate/internal/renderer
 import intldate/internal/time
+import tzif/database
 
 /// Format a timestamp according to the specified locale and configuration.
 ///
@@ -109,6 +122,37 @@ pub fn try_format(
   config config: DateTimeFormatConfig,
 ) -> Result(String, IntlError) {
   raw_format(date, time_zone, locale, config)
+}
+
+/// Set the global time zone database used to resolve time zones on Erlang.
+///
+/// By default, on Erlang, this library tries to load a `TzDatabase` from the
+/// operating system (typically `/usr/share/zoneinfo`). If no such data is
+/// found there, formatting fails with `FailedToLoadTimeZone`.
+///
+/// Call this function once at startup to provide your own `TzDatabase`
+/// instead, for example the one bundled by the
+/// [`zones`](https://hex.pm/packages/zones) package, so time zone resolution
+/// no longer depends on what is installed on the host machine.
+///
+/// This has no effect on JavaScript, where time zones are resolved by the
+/// native `Intl.DateTimeFormat()`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import intldate
+/// import zones
+///
+/// pub fn main() {
+///   intldate.set_time_zone_database(zones.database())
+///
+///   // ... the rest of your application
+/// }
+/// ```
+///
+pub fn set_time_zone_database(db: database.TzDatabase) -> Nil {
+  time.set_default_time_zone_database(db)
 }
 
 @external(javascript, "./intldate.ffi.mjs", "formatTimestamp")

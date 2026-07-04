@@ -1,5 +1,7 @@
 -module(intldate_time_ffi).
--export([system_time_zone/0]).
+-export([system_time_zone/0, set_default_time_zone_database/1, get_default_time_zone_database/0]).
+
+-define(DEFAULT_TIME_ZONE_DATABASE_KEY, {intldate, default_time_zone_database}).
 
 system_time_zone() ->
     case from_env() of
@@ -9,6 +11,16 @@ system_time_zone() ->
                 {ok, Zone} -> {ok, Zone};
                 error -> from_timezone_file()
             end
+    end.
+
+set_default_time_zone_database(Db) ->
+    persistent_term:put(?DEFAULT_TIME_ZONE_DATABASE_KEY, Db),
+    nil.
+
+get_default_time_zone_database() ->
+    case persistent_term:get(?DEFAULT_TIME_ZONE_DATABASE_KEY, undefined) of
+        undefined -> {error, nil};
+        Db -> {ok, Db}
     end.
 
 from_env() ->
