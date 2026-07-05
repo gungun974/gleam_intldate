@@ -2,11 +2,23 @@ import gleam/option
 import gleam/time/timestamp
 import gleeunit
 import intldate
+@target(erlang)
 import zones
 
 pub fn main() -> Nil {
-  intldate.set_time_zone_database(zones.database())
+  let _ = configure_test_timezone()
+
   gleeunit.main()
+}
+
+@external(erlang, "intldate_test", "do_configure_test_timezone")
+fn configure_test_timezone() -> Nil {
+  Nil
+}
+
+@target(erlang)
+pub fn do_configure_test_timezone() {
+  intldate.set_time_zone_database(zones.database())
 }
 
 pub fn format_full_date_with_utc_timezone_fr_test() {

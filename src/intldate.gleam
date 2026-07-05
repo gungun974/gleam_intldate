@@ -30,11 +30,13 @@
 //// time zone database so it works the same on every machine.
 
 import gleam/option.{type Option, None, Some}
+import gleam/time/calendar
+import gleam/time/duration
 import gleam/time/timestamp
 import intldate/internal/chronology
 import intldate/internal/locale
 import intldate/internal/renderer
-import intldate/internal/time
+@target(erlang)
 import tzif/database
 
 /// Format a timestamp according to the specified locale and configuration.
@@ -160,6 +162,13 @@ pub fn try_format(
   raw_format(date, time_zone, locale, config)
 }
 
+@target(erlang)
+@external(erlang, "intldate@internal@time", "set_default_time_zone_database")
+fn do_set_time_zone_database(_db: database.TzDatabase) -> Nil {
+  Nil
+}
+
+@target(erlang)
 /// Set the global time zone database used to resolve time zones on Erlang.
 ///
 /// By default, on Erlang, this library tries to load a `TzDatabase` from the
@@ -188,7 +197,18 @@ pub fn try_format(
 /// ```
 ///
 pub fn set_time_zone_database(db: database.TzDatabase) -> Nil {
-  time.set_default_time_zone_database(db)
+  do_set_time_zone_database(db)
+}
+
+@external(erlang, "intldate@internal@time", "resolve")
+fn resolve_time(
+  _date: timestamp.Timestamp,
+  _time_zone: Option(String),
+) -> Result(
+  #(calendar.Date, calendar.TimeOfDay, Bool, duration.Duration, String),
+  Nil,
+) {
+  Error(Nil)
 }
 
 @external(javascript, "./intldate.ffi.mjs", "formatTimestamp")
@@ -206,7 +226,7 @@ fn raw_format(
   case locale.load_locale(locale, locale_matcher) {
     Error(_) -> Error(FailedToLoadLocale(locale |> option.unwrap("en")))
     Ok(locale) ->
-      case time.resolve(date, time_zone) {
+      case resolve_time(date, time_zone) {
         Error(_) ->
           Error(case time_zone {
             Some(zone_name) -> FailedToLoadTimeZone(zone_name)
