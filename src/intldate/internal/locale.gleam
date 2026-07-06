@@ -185,6 +185,8 @@ pub type Locale {
     hour_cycle: HourCycle,
     default_calendar: chronology.Chronology,
     numbering_system: List(String),
+    plurals: PluralRules,
+    relative: Relative,
   )
 }
 
@@ -504,6 +506,16 @@ fn locale_decoder(id: String) -> decode.Decoder(Locale) {
     decode.string,
   )
   use numbering_system <- decode.field("nu", decode.list(decode.string))
+  use plurals <- decode.optional_field(
+    "plurals",
+    empty_plural_rules(),
+    plural_rules_decoder(),
+  )
+  use relative <- decode.optional_field(
+    "relative",
+    empty_relative(),
+    relative_decoder(),
+  )
 
   decode.success(Locale(
     id:,
@@ -538,6 +550,8 @@ fn locale_decoder(id: String) -> decode.Decoder(Locale) {
       _ -> chronology.CalendarGregory
     },
     numbering_system:,
+    plurals:,
+    relative:,
   ))
 }
 
@@ -760,4 +774,194 @@ pub fn load_calendar(
       }
     }
   }
+}
+
+pub type PluralRelation {
+  PluralRelation(
+    operand: String,
+    modulus: Option(Int),
+    negate: Bool,
+    ranges: List(#(Int, Int)),
+  )
+}
+
+pub type PluralRules {
+  PluralRules(
+    zero: List(List(PluralRelation)),
+    one: List(List(PluralRelation)),
+    two: List(List(PluralRelation)),
+    few: List(List(PluralRelation)),
+    many: List(List(PluralRelation)),
+  )
+}
+
+pub type RelativeStyle {
+  RelativeStyle(
+    literals: dict.Dict(Int, String),
+    future: dict.Dict(String, String),
+    past: dict.Dict(String, String),
+  )
+}
+
+pub type RelativeField {
+  RelativeField(
+    long: RelativeStyle,
+    short: RelativeStyle,
+    narrow: RelativeStyle,
+  )
+}
+
+pub type Relative {
+  Relative(
+    year: RelativeField,
+    quarter: RelativeField,
+    month: RelativeField,
+    week: RelativeField,
+    day: RelativeField,
+    hour: RelativeField,
+    minute: RelativeField,
+    second: RelativeField,
+  )
+}
+
+pub fn empty_plural_rules() -> PluralRules {
+  PluralRules(zero: [], one: [], two: [], few: [], many: [])
+}
+
+fn empty_relative_style() -> RelativeStyle {
+  RelativeStyle(literals: dict.new(), future: dict.new(), past: dict.new())
+}
+
+fn empty_relative_field() -> RelativeField {
+  RelativeField(
+    long: empty_relative_style(),
+    short: empty_relative_style(),
+    narrow: empty_relative_style(),
+  )
+}
+
+pub fn empty_relative() -> Relative {
+  Relative(
+    year: empty_relative_field(),
+    quarter: empty_relative_field(),
+    month: empty_relative_field(),
+    week: empty_relative_field(),
+    day: empty_relative_field(),
+    hour: empty_relative_field(),
+    minute: empty_relative_field(),
+    second: empty_relative_field(),
+  )
+}
+
+fn plural_range_decoder() -> decode.Decoder(#(Int, Int)) {
+  use bounds <- decode.then(decode.list(decode.int))
+  case bounds {
+    [only] -> decode.success(#(only, only))
+    [lo, hi, ..] -> decode.success(#(lo, hi))
+    [] -> decode.failure(#(0, 0), "PluralRange")
+  }
+}
+
+fn plural_relation_decoder() -> decode.Decoder(PluralRelation) {
+  use operand <- decode.field("op", decode.string)
+  use modulus <- decode.optional_field(
+    "mod",
+    None,
+    decode.map(decode.int, Some),
+  )
+  use negate <- decode.optional_field("neg", False, decode.bool)
+  use ranges <- decode.field("ranges", decode.list(plural_range_decoder()))
+  decode.success(PluralRelation(operand:, modulus:, negate:, ranges:))
+}
+
+fn plural_rule_decoder() -> decode.Decoder(List(List(PluralRelation))) {
+  decode.list(decode.list(plural_relation_decoder()))
+}
+
+fn plural_rules_decoder() -> decode.Decoder(PluralRules) {
+  use zero <- decode.optional_field("zero", [], plural_rule_decoder())
+  use one <- decode.optional_field("one", [], plural_rule_decoder())
+  use two <- decode.optional_field("two", [], plural_rule_decoder())
+  use few <- decode.optional_field("few", [], plural_rule_decoder())
+  use many <- decode.optional_field("many", [], plural_rule_decoder())
+  decode.success(PluralRules(zero:, one:, two:, few:, many:))
+}
+
+fn relative_style_decoder() -> decode.Decoder(RelativeStyle) {
+  use literals <- decode.optional_field(
+    "literals",
+    dict.new(),
+    int_keyed_decoder(),
+  )
+  use future <- decode.optional_field(
+    "future",
+    dict.new(),
+    decode.dict(decode.string, decode.string),
+  )
+  use past <- decode.optional_field(
+    "past",
+    dict.new(),
+    decode.dict(decode.string, decode.string),
+  )
+  decode.success(RelativeStyle(literals:, future:, past:))
+}
+
+fn relative_field_decoder() -> decode.Decoder(RelativeField) {
+  use long <- decode.field("long", relative_style_decoder())
+  use short <- decode.optional_field("short", long, relative_style_decoder())
+  use narrow <- decode.optional_field("narrow", long, relative_style_decoder())
+  decode.success(RelativeField(long:, short:, narrow:))
+}
+
+fn relative_decoder() -> decode.Decoder(Relative) {
+  use year <- decode.optional_field(
+    "year",
+    empty_relative_field(),
+    relative_field_decoder(),
+  )
+  use quarter <- decode.optional_field(
+    "quarter",
+    empty_relative_field(),
+    relative_field_decoder(),
+  )
+  use month <- decode.optional_field(
+    "month",
+    empty_relative_field(),
+    relative_field_decoder(),
+  )
+  use week <- decode.optional_field(
+    "week",
+    empty_relative_field(),
+    relative_field_decoder(),
+  )
+  use day <- decode.optional_field(
+    "day",
+    empty_relative_field(),
+    relative_field_decoder(),
+  )
+  use hour <- decode.optional_field(
+    "hour",
+    empty_relative_field(),
+    relative_field_decoder(),
+  )
+  use minute <- decode.optional_field(
+    "minute",
+    empty_relative_field(),
+    relative_field_decoder(),
+  )
+  use second <- decode.optional_field(
+    "second",
+    empty_relative_field(),
+    relative_field_decoder(),
+  )
+  decode.success(Relative(
+    year:,
+    quarter:,
+    month:,
+    week:,
+    day:,
+    hour:,
+    minute:,
+    second:,
+  ))
 }

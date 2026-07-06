@@ -156,6 +156,141 @@ function extractTimezoneToMetazoneMap() {
 
 const tzToMetaZoneMap = extractTimezoneToMetazoneMap();
 
+const cardinalPlurals =
+  require("cldr-core/supplemental/plurals.json").supplemental[
+    "plurals-type-cardinal"
+  ];
+
+function parsePluralRelation(text) {
+  const negate = text.includes("!=");
+  const [rawLeft, rawRight] = text.split(negate ? "!=" : "=");
+  let left = rawLeft.trim();
+  const relation = { ranges: [] };
+
+  const modIndex = left.indexOf("%");
+  if (modIndex !== -1) {
+    relation.mod = parseInt(left.slice(modIndex + 1).trim(), 10);
+    left = left.slice(0, modIndex).trim();
+  }
+  relation.op = left;
+  if (negate) relation.neg = true;
+
+  relation.ranges = rawRight
+    .trim()
+    .split(",")
+    .map((part) => {
+      part = part.trim();
+      if (part.includes("..")) {
+        const [lo, hi] = part.split("..");
+        return [parseInt(lo, 10), parseInt(hi, 10)];
+      }
+      const value = parseInt(part, 10);
+      return [value, value];
+    });
+
+  return relation;
+}
+
+function parsePluralCondition(text) {
+  return text
+    .split(/\bor\b/)
+    .map((andPart) =>
+      andPart
+        .split(/\band\b/)
+        .map((relation) => parsePluralRelation(relation.trim())),
+    );
+}
+
+function pluralRulesFor(locale) {
+  let rules;
+  for (const candidate of localeChain(locale)) {
+    if (cardinalPlurals[candidate]) {
+      rules = cardinalPlurals[candidate];
+      break;
+    }
+  }
+  if (!rules) return {};
+
+  const out = {};
+  for (const key of Object.keys(rules)) {
+    const category = key.replace("pluralRule-count-", "");
+    if (category === "other") continue;
+    const condition = rules[key].split("@")[0].trim();
+    if (!condition) continue;
+    out[category] = parsePluralCondition(condition);
+  }
+  return out;
+}
+
+const RELATIVE_UNITS = [
+  "year",
+  "quarter",
+  "month",
+  "week",
+  "day",
+  "hour",
+  "minute",
+  "second",
+];
+
+function relativeStyleFrom(fieldNode) {
+  if (!fieldNode) return null;
+  const literals = {};
+  const future = {};
+  const past = {};
+
+  for (const key of Object.keys(fieldNode)) {
+    if (key.startsWith("relative-type-")) {
+      literals[key.slice("relative-type-".length)] = fieldNode[key];
+    } else if (key === "relativeTime-type-future") {
+      for (const patternKey of Object.keys(fieldNode[key])) {
+        future[patternKey.replace("relativeTimePattern-count-", "")] =
+          fieldNode[key][patternKey];
+      }
+    } else if (key === "relativeTime-type-past") {
+      for (const patternKey of Object.keys(fieldNode[key])) {
+        past[patternKey.replace("relativeTimePattern-count-", "")] =
+          fieldNode[key][patternKey];
+      }
+    }
+  }
+
+  const style = {};
+  if (Object.keys(literals).length) style.literals = literals;
+  if (Object.keys(future).length) style.future = future;
+  if (Object.keys(past).length) style.past = past;
+  return style;
+}
+
+function loadDateFields(locale) {
+  for (const l of localeChain(locale)) {
+    let file;
+    try {
+      file = require(`cldr-dates-full/main/${l}/dateFields.json`);
+    } catch {
+      continue;
+    }
+    const fields = file.main[l] && file.main[l].dates.fields;
+    if (fields) return fields;
+  }
+  return null;
+}
+
+function relativeFrom(locale) {
+  const fields = loadDateFields(locale);
+  if (!fields) return {};
+
+  const out = {};
+  for (const unit of RELATIVE_UNITS) {
+    const long = relativeStyleFrom(fields[unit]);
+    if (!long) continue;
+    const short = relativeStyleFrom(fields[`${unit}-short`]) || long;
+    const narrow = relativeStyleFrom(fields[`${unit}-narrow`]) || long;
+    out[unit] = { long, short, narrow };
+  }
+  return out;
+}
+
 const CALENDAR_SOURCES = [
   ["buddhist", "buddhist", "buddhist"],
   ["chinese", "chinese", "chinese"],
@@ -503,6 +638,8 @@ export function loadDatesFields(locale) {
     hourCycle: hc[0],
     defaultCalendar: defaultCalendarForRegion(region),
     nu,
+    plurals: pluralRulesFor(locale),
+    relative: relativeFrom(locale),
   };
 }
 

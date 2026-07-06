@@ -1,0 +1,292 @@
+//// Relative time formatting for `gleam_time` following the JavaScript `Intl.RelativeTimeFormat()` API.
+////
+//// This module provides a type-safe wrapper around the `Intl.RelativeTimeFormat` API,
+//// allowing you to format durations as human-readable relative times (like "in 3 hours"
+//// or "il y a 5 secondes") according to locale-specific conventions.
+////
+//// **Works on both the JavaScript and Erlang runtimes.** On JavaScript it delegates to
+//// the native `Intl.RelativeTimeFormat()`, while on Erlang it uses a pure Gleam
+//// reimplementation that mirrors the same behaviour, so the output stays consistent
+//// whichever target you compile to.
+////
+//// The duration is expressed relative to now: a negative duration is formatted as a time
+//// in the past, and a positive duration as a time in the future. The `unit` you pass
+//// selects which unit the duration is expressed in, and the duration is divided by that
+//// unit to obtain the amount to display.
+////
+//// ## Error handling
+////
+//// `format` never fails: if the locale cannot be resolved, it returns a human-readable,
+//// English-only message describing the error (via `describe_error`), regardless of the
+//// requested locale.
+////
+//// If you'd rather handle the error yourself, use `try_format`, which returns a
+//// `Result(String, IntlError)`.
+
+import gleam/option.{type Option, None, Some}
+import gleam/time/duration
+import intldate/internal/locale
+import intldate/internal/renderer
+
+/// Format a duration as a relative time according to the specified locale and configuration.
+///
+/// ## Parameters
+///
+/// - `duration`: The duration relative to now. A negative duration is formatted as a time
+///   in the past, and a positive duration as a time in the future.
+/// - `unit`: The unit the duration is expressed in. The duration is divided by this unit
+///   to obtain the amount to display.
+/// - `locale`: The locale to use for formatting (BCP 47 language tag like "en-US", "fr-FR").
+///   If `None`, uses the system's default locale.
+/// - `config`: The configuration object specifying the style and numeric behaviour
+///
+/// ## Example
+///
+/// ```gleam
+/// import gleam/option
+/// import gleam/time/duration
+/// import intlrelative
+///
+/// intlrelative.format(
+///   duration: duration.seconds(-5),
+///   unit: intlrelative.Second,
+///   locale: option.Some("fr-FR"),
+///   config: intlrelative.new(),
+/// )
+/// // -> "il y a 5 secondes"
+/// ```
+///
+pub fn format(
+  duration duration: duration.Duration,
+  unit unit: Unit,
+  locale locale: Option(String),
+  config config: RelativeTimeFormatConfig,
+) -> String {
+  case raw_format(duration, unit, locale, config) {
+    Ok(formatted) -> formatted
+    Error(error) -> describe_error(error)
+  }
+}
+
+pub type IntlError {
+  /// The requested locale could not be loaded or resolved.
+  FailedToLoadLocale(inner: String)
+  /// Any error not accounted for by this type.
+  Unknown(inner: String)
+}
+
+/// Convert an error into a human-readable description.
+///
+/// ## Example
+/// ```gleam
+/// let assert "Failed to load locale: fr-FR" =
+///   describe_error(FailedToLoadLocale("fr-FR"))
+/// ```
+///
+pub fn describe_error(error: IntlError) -> String {
+  case error {
+    FailedToLoadLocale(inner) -> "Failed to load locale: " <> inner
+    Unknown(inner) -> "Unknown error: " <> inner
+  }
+}
+
+/// Format a duration as a relative time according to the specified locale and
+/// configuration, returning a `Result` instead of falling back to an error message.
+///
+/// This is identical to `format`, except it lets you handle the `IntlError`
+/// yourself instead of getting a human-readable string when resolution fails.
+///
+/// ## Example
+///
+/// ```gleam
+/// import gleam/option
+/// import gleam/time/duration
+/// import intlrelative
+///
+/// intlrelative.try_format(
+///   duration: duration.hours(3),
+///   unit: intlrelative.Hour,
+///   locale: option.Some("invalid-locale"),
+///   config: intlrelative.new(),
+/// )
+/// // -> Error(intlrelative.FailedToLoadLocale("invalid-locale"))
+/// ```
+///
+pub fn try_format(
+  duration duration: duration.Duration,
+  unit unit: Unit,
+  locale locale: Option(String),
+  config config: RelativeTimeFormatConfig,
+) -> Result(String, IntlError) {
+  raw_format(duration, unit, locale, config)
+}
+
+@external(javascript, "./intldate.ffi.mjs", "formatDuration")
+fn raw_format(
+  duration: duration.Duration,
+  unit: Unit,
+  locale: Option(String),
+  config: RelativeTimeFormatConfig,
+) -> Result(String, IntlError) {
+  let locale_matcher = case config.locale_matcher {
+    Some(LocaleMatcherLookup) -> locale.Lookup
+    Some(LocaleMatcherBestFit) | None -> locale.BestFit
+  }
+
+  case locale.load_locale(locale, locale_matcher) {
+    Error(_) -> Error(FailedToLoadLocale(locale |> option.unwrap("en")))
+    Ok(loaded) ->
+      Ok(renderer.render_relative(
+        locale: loaded,
+        duration: duration,
+        unit: map_unit(unit),
+        style: map_style(config.style),
+        numeric: map_numeric(config.numeric),
+      ))
+  }
+}
+
+fn map_unit(unit: Unit) -> renderer.Unit {
+  case unit {
+    Second -> renderer.Second
+    Minute -> renderer.Minute
+    Hour -> renderer.Hour
+    Day -> renderer.Day
+    Week -> renderer.Week
+    Month -> renderer.Month
+    Quarter -> renderer.Quarter
+    Year -> renderer.Year
+  }
+}
+
+fn map_style(style: Option(Style)) -> renderer.Style {
+  case style {
+    Some(Long) | None -> renderer.StyleLong
+    Some(Short) -> renderer.StyleShort
+    Some(Narrow) -> renderer.StyleNarrow
+  }
+}
+
+fn map_numeric(numeric: Option(Numeric)) -> renderer.Numeric {
+  case numeric {
+    Some(Auto) -> renderer.NumericAuto
+    Some(Always) | None -> renderer.NumericAlways
+  }
+}
+
+/// The unit the duration is expressed in.
+///
+/// - `Second`: Seconds
+/// - `Minute`: Minutes
+/// - `Hour`: Hours
+/// - `Day`: Days
+/// - `Week`: Weeks
+/// - `Month`: Months
+/// - `Quarter`: Quarters (three-month periods)
+/// - `Year`: Years
+///
+pub type Unit {
+  Second
+  Minute
+  Hour
+  Day
+  Week
+  Month
+  Quarter
+  Year
+}
+
+/// The locale matching algorithm to use.
+///
+/// - `LocaleMatcherBestFit`: The runtime is allowed to choose the best matching locale,
+///   potentially considering extension keys and other options.
+/// - `LocaleMatcherLookup`: Use the BCP 47 lookup algorithm to find the best matching locale.
+///
+pub type LocaleMatcher {
+  LocaleMatcherBestFit
+  LocaleMatcherLookup
+}
+
+/// The length of the formatted message.
+///
+/// - `Long`: Full form (e.g., "in 3 hours", "il y a 5 secondes")
+/// - `Short`: Abbreviated form (e.g., "in 3 hr.", "in 2 min.")
+/// - `Narrow`: Narrow form, may be identical to `Short` for some locales (e.g., "3 hr. ago", "1h ago")
+///
+pub type Style {
+  Long
+  Short
+  Narrow
+}
+
+/// Whether to always use the numeric value or allow idiomatic phrasing.
+///
+/// - `Always`: Always output a numeric value (e.g., "1 day ago", "il y a 1 jour")
+/// - `Auto`: Use idiomatic phrasing when available (e.g., "yesterday", "hier")
+///
+pub type Numeric {
+  Always
+  Auto
+}
+
+/// Configuration for relative time formatting.
+///
+/// This type allows you to specify the style and numeric behaviour of the
+/// formatted output.
+///
+/// Create a new configuration with `new()` and customize it with the various
+/// `with_*` functions.
+///
+pub type RelativeTimeFormatConfig {
+  RelativeTimeFormatConfig(
+    locale_matcher: Option(LocaleMatcher),
+    style: Option(Style),
+    numeric: Option(Numeric),
+  )
+}
+
+/// Create a new relative time format configuration with all options unset.
+///
+/// Use the various `with_*` functions to customize the configuration.
+///
+/// ## Example
+///
+/// ```gleam
+/// intlrelative.new()
+///   |> intlrelative.with_style(intlrelative.Short)
+///   |> intlrelative.with_numeric(intlrelative.Auto)
+/// ```
+///
+pub fn new() -> RelativeTimeFormatConfig {
+  RelativeTimeFormatConfig(locale_matcher: None, style: None, numeric: None)
+}
+
+/// Set the locale matching algorithm.
+///
+/// The locale matcher determines how the runtime selects the best matching
+/// locale when the exact locale you requested isn't available.
+///
+pub fn with_locale_matcher(
+  config: RelativeTimeFormatConfig,
+  locale_matcher: LocaleMatcher,
+) -> RelativeTimeFormatConfig {
+  RelativeTimeFormatConfig(..config, locale_matcher: Some(locale_matcher))
+}
+
+/// Set the length of the formatted message.
+///
+pub fn with_style(
+  config: RelativeTimeFormatConfig,
+  style: Style,
+) -> RelativeTimeFormatConfig {
+  RelativeTimeFormatConfig(..config, style: Some(style))
+}
+
+/// Set whether to always use the numeric value or allow idiomatic phrasing.
+///
+pub fn with_numeric(
+  config: RelativeTimeFormatConfig,
+  numeric: Numeric,
+) -> RelativeTimeFormatConfig {
+  RelativeTimeFormatConfig(..config, numeric: Some(numeric))
+}

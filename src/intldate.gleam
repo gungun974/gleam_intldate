@@ -234,7 +234,7 @@ fn raw_format(
           })
         Ok(#(date, time, is_dst, offset, zone_name)) ->
           case
-            renderer.render(
+            renderer.render_date(
               locale,
               renderer.DateTimeFormatConfig(
                 calendar: option.map(config.calendar, fn(calendar_value) {

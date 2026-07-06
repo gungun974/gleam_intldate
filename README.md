@@ -42,14 +42,44 @@ pub fn main() {
 }
 ```
 
+## Relative time formatting
+
+The `intlrelative` module formats durations as human-readable relative times
+following the JavaScript `Intl.RelativeTimeFormat()` API. On JavaScript it delegates
+to the native `Intl.RelativeTimeFormat()`, while on Erlang it relies on the same pure
+Gleam reimplementation, so the output stays consistent whichever target you compile to.
+
+A negative duration is formatted as a time in the past and a positive duration as a
+time in the future. The `unit` you pass selects which unit the duration is expressed in.
+
+```gleam
+import gleam/option
+import gleam/time/duration
+import intlrelative
+
+pub fn main() {
+  let result =
+    intlrelative.format(
+      duration: duration.seconds(-5),
+      unit: intlrelative.Second,
+      locale: option.Some("fr-FR"),
+      config: intlrelative.new(),
+    )
+
+  // result == "il y a 5 secondes"
+}
+```
+
 ## Error handling
 
 `intldate.format` never fails: if the time zone, locale, or calendar cannot be
 resolved, it returns a human-readable, English-only message describing the error
-(via `intldate.describe_error`), regardless of the requested locale.
+(via `intldate.describe_error`), regardless of the requested locale. The same holds
+for `intlrelative.format`, which returns such a message if the locale cannot be
+resolved.
 
-If you'd rather handle the error yourself, use `intldate.try_format`, which
-returns a `Result(String, intldate.IntlError)`:
+If you'd rather handle the error yourself, use `intldate.try_format` (or
+`intlrelative.try_format`), which returns a `Result(String, intldate.IntlError)`:
 
 ```gleam
 import gleam/option

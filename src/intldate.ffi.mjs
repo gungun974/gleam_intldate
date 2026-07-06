@@ -1,6 +1,29 @@
 import { Option$isSome, Option$Some$0 } from "../gleam_stdlib/gleam/option.mjs";
 import * as $timestamp from "../gleam_time/gleam/time/timestamp.mjs";
+import * as $duration from "../gleam_time/gleam/time/duration.mjs";
 import { Result$Ok, Result$Error } from "./gleam.mjs";
+import {
+  LocaleMatcher$isLocaleMatcherBestFit as Relative$LocaleMatcher$isLocaleMatcherBestFit,
+  LocaleMatcher$isLocaleMatcherLookup as Relative$LocaleMatcher$isLocaleMatcherLookup,
+  Style$isLong,
+  Style$isShort,
+  Style$isNarrow,
+  Numeric$isAlways,
+  Numeric$isAuto,
+  Unit$isSecond,
+  Unit$isMinute,
+  Unit$isHour,
+  Unit$isDay,
+  Unit$isWeek,
+  Unit$isMonth,
+  Unit$isQuarter,
+  Unit$isYear,
+  IntlError$FailedToLoadLocale as Relative$IntlError$FailedToLoadLocale,
+  IntlError$Unknown as Relative$IntlError$Unknown,
+  RelativeTimeFormatConfig$RelativeTimeFormatConfig$locale_matcher,
+  RelativeTimeFormatConfig$RelativeTimeFormatConfig$style,
+  RelativeTimeFormatConfig$RelativeTimeFormatConfig$numeric,
+} from "./intlrelative.mjs";
 import {
   LocaleMatcher$isLocaleMatcherBestFit,
   LocaleMatcher$isLocaleMatcherLookup,
@@ -358,6 +381,126 @@ export function formatTimestamp(timestamp, timeZone, locale, config) {
     return Result$Error(
       castError(error, { localeStr, timeZoneStr, calendarValue }),
     );
+  }
+}
+
+const RELATIVE_UNIT_SECONDS = {
+  second: 1,
+  minute: 60,
+  hour: 3600,
+  day: 86400,
+  week: 604800,
+  month: 2629746,
+  quarter: 7889238,
+  year: 31556952,
+};
+
+export function formatDuration(duration, unit, locale, config) {
+  const locale_matcher =
+    RelativeTimeFormatConfig$RelativeTimeFormatConfig$locale_matcher(config);
+  const style = RelativeTimeFormatConfig$RelativeTimeFormatConfig$style(config);
+  const numeric =
+    RelativeTimeFormatConfig$RelativeTimeFormatConfig$numeric(config);
+
+  let localeMatcher = undefined;
+  if (Option$isSome(locale_matcher)) {
+    const value = Option$Some$0(locale_matcher);
+    switch (true) {
+      case Relative$LocaleMatcher$isLocaleMatcherBestFit(value):
+        localeMatcher = "best fit";
+        break;
+      case Relative$LocaleMatcher$isLocaleMatcherLookup(value):
+        localeMatcher = "lookup";
+        break;
+    }
+  }
+
+  let styleValue = undefined;
+  if (Option$isSome(style)) {
+    const value = Option$Some$0(style);
+    switch (true) {
+      case Style$isLong(value):
+        styleValue = "long";
+        break;
+      case Style$isShort(value):
+        styleValue = "short";
+        break;
+      case Style$isNarrow(value):
+        styleValue = "narrow";
+        break;
+    }
+  }
+
+  let numericValue = undefined;
+  if (Option$isSome(numeric)) {
+    const value = Option$Some$0(numeric);
+    switch (true) {
+      case Numeric$isAlways(value):
+        numericValue = "always";
+        break;
+      case Numeric$isAuto(value):
+        numericValue = "auto";
+        break;
+    }
+  }
+
+  let unitValue = undefined;
+  switch (true) {
+    case Unit$isSecond(unit):
+      unitValue = "second";
+      break;
+    case Unit$isMinute(unit):
+      unitValue = "minute";
+      break;
+    case Unit$isHour(unit):
+      unitValue = "hour";
+      break;
+    case Unit$isDay(unit):
+      unitValue = "day";
+      break;
+    case Unit$isWeek(unit):
+      unitValue = "week";
+      break;
+    case Unit$isMonth(unit):
+      unitValue = "month";
+      break;
+    case Unit$isQuarter(unit):
+      unitValue = "quarter";
+      break;
+    case Unit$isYear(unit):
+      unitValue = "year";
+      break;
+  }
+
+  const seconds = $duration.to_seconds(duration);
+  const amount = seconds / RELATIVE_UNIT_SECONDS[unitValue];
+
+  const localeStr = Option$isSome(locale) ? Option$Some$0(locale) : undefined;
+
+  if (
+    localeStr &&
+    Intl.RelativeTimeFormat.supportedLocalesOf([localeStr]).length === 0
+  ) {
+    return Result$Error(Relative$IntlError$FailedToLoadLocale(localeStr));
+  }
+
+  try {
+    const formatter = new Intl.RelativeTimeFormat(localeStr, {
+      localeMatcher,
+      style: styleValue,
+      numeric: numericValue,
+    });
+
+    return Result$Ok(formatter.format(amount, unitValue));
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message ? error.message : String(error);
+
+    if (localeStr && message.includes(localeStr)) {
+      return Result$Error(Relative$IntlError$FailedToLoadLocale(localeStr));
+    }
+
+    return Result$Error(Relative$IntlError$Unknown(message));
   }
 }
 

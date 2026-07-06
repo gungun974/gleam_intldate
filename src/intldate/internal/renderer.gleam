@@ -1,4 +1,5 @@
 import gleam/dict
+import gleam/float
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -522,7 +523,7 @@ type Ctx {
   )
 }
 
-pub fn render(
+pub fn render_date(
   locale: locale.Locale,
   config: DateTimeFormatConfig,
   date: calendar.Date,
@@ -1118,4 +1119,263 @@ pub type DateTimeFormatConfig {
     format_matcher: Option(FormatMatcher),
     hour12: Option(Bool),
   )
+}
+
+pub type Unit {
+  Second
+  Minute
+  Hour
+  Day
+  Week
+  Month
+  Quarter
+  Year
+}
+
+pub type Numeric {
+  NumericAlways
+  NumericAuto
+}
+
+fn unit_seconds(unit: Unit) -> Float {
+  case unit {
+    Second -> 1.0
+    Minute -> 60.0
+    Hour -> 3600.0
+    Day -> 86_400.0
+    Week -> 604_800.0
+    Month -> 2_629_746.0
+    Quarter -> 7_889_238.0
+    Year -> 31_556_952.0
+  }
+}
+
+fn select_relative_field(
+  relative: locale.Relative,
+  unit: Unit,
+) -> locale.RelativeField {
+  case unit {
+    Second -> relative.second
+    Minute -> relative.minute
+    Hour -> relative.hour
+    Day -> relative.day
+    Week -> relative.week
+    Month -> relative.month
+    Quarter -> relative.quarter
+    Year -> relative.year
+  }
+}
+
+fn select_relative_style(
+  field: locale.RelativeField,
+  style: Style,
+) -> locale.RelativeStyle {
+  case style {
+    StyleShort -> field.short
+    StyleNarrow -> field.narrow
+    _ -> field.long
+  }
+}
+
+pub fn render_relative(
+  locale locale: locale.Locale,
+  duration duration: duration.Duration,
+  unit unit: Unit,
+  style style: Style,
+  numeric numeric: Numeric,
+) -> String {
+  let value = duration.to_seconds(duration) /. unit_seconds(unit)
+
+  let field = select_relative_field(locale.relative, unit)
+  let style_data = select_relative_style(field, style)
+
+  case relative_literal_match(style_data, numeric, value) {
+    Some(literal) -> literal
+    None -> {
+      let magnitude = float.absolute_value(value)
+      let patterns = case value <. 0.0 {
+        True -> style_data.past
+        False -> style_data.future
+      }
+      let category = plural_category(locale.plurals, operands_of(magnitude))
+      let pattern = pick_relative_pattern(patterns, category)
+      let number =
+        localize_digits(
+          locale.numbering_system,
+          relative_number_string(magnitude),
+        )
+      string.replace(pattern, "{0}", number)
+    }
+  }
+}
+
+fn relative_literal_match(
+  style_data: locale.RelativeStyle,
+  numeric: Numeric,
+  value: Float,
+) -> Option(String) {
+  case numeric {
+    NumericAlways -> None
+    NumericAuto ->
+      case is_integer(value) {
+        False -> None
+        True ->
+          case dict.get(style_data.literals, float.round(value)) {
+            Ok(literal) -> Some(literal)
+            Error(_) -> None
+          }
+      }
+  }
+}
+
+fn pick_relative_pattern(
+  patterns: dict.Dict(String, String),
+  category: String,
+) -> String {
+  case dict.get(patterns, category) {
+    Ok(pattern) -> pattern
+    Error(_) ->
+      case dict.get(patterns, "other") {
+        Ok(pattern) -> pattern
+        Error(_) -> "{0}"
+      }
+  }
+}
+
+type Operands {
+  Operands(n: Float, i: Int, v: Int, w: Int, f: Int, t: Int, e: Int)
+}
+
+fn operands_of(value: Float) -> Operands {
+  let integer_part = float.truncate(value)
+  let thousandths =
+    float.round({ value -. int.to_float(integer_part) } *. 1000.0)
+
+  let #(integer_part, thousandths) = case thousandths >= 1000 {
+    True -> #(integer_part + 1, thousandths - 1000)
+    False -> #(integer_part, thousandths)
+  }
+
+  let fraction_digits = trim_trailing_zeros(pad_left_string(thousandths, 3))
+  let visible = string.length(fraction_digits)
+  let fraction_value = case int.parse(fraction_digits) {
+    Ok(parsed) -> parsed
+    Error(_) -> 0
+  }
+
+  Operands(
+    n: value,
+    i: integer_part,
+    v: visible,
+    w: visible,
+    f: fraction_value,
+    t: fraction_value,
+    e: 0,
+  )
+}
+
+fn relative_number_string(value: Float) -> String {
+  let operands = operands_of(value)
+  case operands.v {
+    0 -> int.to_string(operands.i)
+    _ ->
+      int.to_string(operands.i)
+      <> "."
+      <> pad_left_string(operands.f, operands.v)
+  }
+}
+
+fn plural_category(rules: locale.PluralRules, operands: Operands) -> String {
+  case eval_plural_rule(rules.zero, operands) {
+    True -> "zero"
+    False ->
+      case eval_plural_rule(rules.one, operands) {
+        True -> "one"
+        False ->
+          case eval_plural_rule(rules.two, operands) {
+            True -> "two"
+            False ->
+              case eval_plural_rule(rules.few, operands) {
+                True -> "few"
+                False ->
+                  case eval_plural_rule(rules.many, operands) {
+                    True -> "many"
+                    False -> "other"
+                  }
+              }
+          }
+      }
+  }
+}
+
+fn eval_plural_rule(
+  rule: List(List(locale.PluralRelation)),
+  operands: Operands,
+) -> Bool {
+  list.any(rule, fn(conjunction) {
+    list.all(conjunction, eval_plural_relation(_, operands))
+  })
+}
+
+fn eval_plural_relation(
+  relation: locale.PluralRelation,
+  operands: Operands,
+) -> Bool {
+  let value = plural_operand_value(relation.operand, operands)
+  let value = case relation.modulus {
+    None -> value
+    Some(modulus) -> float_modulo(value, modulus)
+  }
+  let in_set = matches_ranges(value, relation.ranges)
+  case relation.negate {
+    True -> !in_set
+    False -> in_set
+  }
+}
+
+fn plural_operand_value(operand: String, operands: Operands) -> Float {
+  case operand {
+    "n" -> operands.n
+    "i" -> int.to_float(operands.i)
+    "v" -> int.to_float(operands.v)
+    "w" -> int.to_float(operands.w)
+    "f" -> int.to_float(operands.f)
+    "t" -> int.to_float(operands.t)
+    "c" | "e" -> int.to_float(operands.e)
+    _ -> operands.n
+  }
+}
+
+fn float_modulo(value: Float, modulus: Int) -> Float {
+  let modulus = int.to_float(modulus)
+  value -. modulus *. float.floor(value /. modulus)
+}
+
+fn matches_ranges(value: Float, ranges: List(#(Int, Int))) -> Bool {
+  case is_integer(value) {
+    False -> False
+    True -> {
+      let value = float.round(value)
+      list.any(ranges, fn(range) { value >= range.0 && value <= range.1 })
+    }
+  }
+}
+
+fn is_integer(value: Float) -> Bool {
+  value == int.to_float(float.truncate(value))
+}
+
+fn pad_left_string(value: Int, width: Int) -> String {
+  let text = int.to_string(value)
+  case width - string.length(text) {
+    padding if padding > 0 -> string.repeat("0", padding) <> text
+    _ -> text
+  }
+}
+
+fn trim_trailing_zeros(text: String) -> String {
+  case string.ends_with(text, "0") {
+    True -> trim_trailing_zeros(string.drop_end(text, 1))
+    False -> text
+  }
 }
