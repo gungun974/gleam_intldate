@@ -17,27 +17,13 @@
 //// If you'd rather handle the error yourself, use `try_format`, which returns a
 //// `Result(String, IntlError)`.
 ////
-//// ## Time zone database on Erlang
-////
-//// On Erlang, resolving a time zone requires an IANA `TzDatabase`. By default this
-//// library tries to load one from the operating system (typically
-//// `/usr/share/zoneinfo`). If the OS has no such data, formatting fails with
-//// `FailedToLoadTimeZone`.
-////
-//// You can avoid depending on the OS entirely by calling `set_time_zone_database`
-//// once at startup with a database of your choice, for example the one bundled by the
-//// [`zones`](https://hex.pm/packages/zones) package, which ships a full copy of the IANA
-//// time zone database so it works the same on every machine.
 
+import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/time/calendar
-import gleam/time/duration
+import gleam/string
 import gleam/time/timestamp
-import intldate/internal/chronology
-import intldate/internal/locale
-import intldate/internal/renderer
-@target(erlang)
-import tzif/database
+import intldate/internal/core
+import intldate/internal/icu
 
 /// Format a timestamp according to the specified locale and configuration.
 ///
@@ -162,53 +148,157 @@ pub fn try_format(
   raw_format(date, time_zone, locale, config)
 }
 
-@target(erlang)
-@external(erlang, "intldate@internal@time", "set_default_time_zone_database")
-fn do_set_time_zone_database(_db: database.TzDatabase) -> Nil {
-  Nil
+/// Format a timestamp and return the structured parts of the formatted output.
+///
+/// This mirrors `Intl.DateTimeFormat.prototype.formatToParts`.
+pub fn format_to_parts(
+  date date: timestamp.Timestamp,
+  time_zone time_zone: Option(String),
+  locale locale: Option(String),
+  config config: DateTimeFormatConfig,
+) -> List(DateTimeFormatPart) {
+  case raw_format_to_parts(date, time_zone, locale, config) {
+    Ok(parts) -> parts
+    Error(error) -> [
+      DateTimeFormatPart(
+        kind: DateTimePartLiteral,
+        value: describe_error(error),
+        source: DateTimePartSourceNone,
+      ),
+    ]
+  }
 }
 
-@target(erlang)
-/// Set the global time zone database used to resolve time zones on Erlang.
+/// Format a timestamp to parts, returning a `Result`.
+pub fn try_format_to_parts(
+  date date: timestamp.Timestamp,
+  time_zone time_zone: Option(String),
+  locale locale: Option(String),
+  config config: DateTimeFormatConfig,
+) -> Result(List(DateTimeFormatPart), IntlError) {
+  raw_format_to_parts(date, time_zone, locale, config)
+}
+
+/// Format a range between two timestamps according to the specified locale and
+/// configuration, using the same options as `format`.
 ///
-/// By default, on Erlang, this library tries to load a `TzDatabase` from the
-/// operating system (typically `/usr/share/zoneinfo`). If no such data is
-/// found there, formatting fails with `FailedToLoadTimeZone`.
+/// This mirrors the `Intl.DateTimeFormat.prototype.formatRange` API: it renders
+/// the two dates together, collapsing the parts they have in common.
 ///
-/// Call this function once at startup to provide your own `TzDatabase`
-/// instead, for example the one bundled by the
-/// [`zones`](https://hex.pm/packages/zones) package, so time zone resolution
-/// no longer depends on what is installed on the host machine.
+/// ## Parameters
 ///
-/// This has no effect on JavaScript, where time zones are resolved by the
-/// native `Intl.DateTimeFormat()`.
+/// - `date_start`: The timestamp marking the start of the range
+/// - `date_end`: The timestamp marking the end of the range
+/// - `time_zone`: The time zone to use (IANA time zone name like "America/New_York").
+///   If `None`, uses the system's local time zone.
+/// - `locale`: The locale to use for formatting (BCP 47 language tag like "en-US", "fr-FR").
+///   If `None`, uses the system's default locale.
+/// - `config`: The configuration object specifying which date/time components to include
+///
+/// Like `format`, this never fails: if the time zone, locale, or calendar cannot
+/// be resolved, it returns a human-readable, English-only message describing the
+/// error (via `describe_error`).
 ///
 /// ## Example
 ///
 /// ```gleam
+/// import gleam/option
+/// import gleam/time/timestamp
 /// import intldate
-/// import zones
 ///
-/// pub fn main() {
-///   intldate.set_time_zone_database(zones.database())
+/// let assert Ok(start) = timestamp.parse_rfc3339("2026-02-24T17:48:22+04:00")
+/// let assert Ok(end) = timestamp.parse_rfc3339("2026-02-27T17:48:22+04:00")
 ///
-///   // ... the rest of your application
-/// }
+/// intldate.format_range(
+///   date_start: start,
+///   date_end: end,
+///   time_zone: option.Some("Indian/Reunion"),
+///   locale: option.Some("fr-FR"),
+///   config: intldate.new()
+///     |> intldate.with_year(intldate.YearNumeric)
+///     |> intldate.with_month(intldate.MonthLong)
+///     |> intldate.with_day(intldate.DayNumeric),
+/// )
+/// // -> "24–27 février 2026"
 /// ```
 ///
-pub fn set_time_zone_database(db: database.TzDatabase) -> Nil {
-  do_set_time_zone_database(db)
+pub fn format_range(
+  date_start date_start: timestamp.Timestamp,
+  date_end date_end: timestamp.Timestamp,
+  time_zone time_zone: Option(String),
+  locale locale: Option(String),
+  config config: DateTimeFormatConfig,
+) -> String {
+  case raw_format_range(date_start, date_end, time_zone, locale, config) {
+    Ok(formatted) -> formatted
+    Error(error) -> describe_error(error)
+  }
 }
 
-@external(erlang, "intldate@internal@time", "resolve")
-fn resolve_time(
-  _date: timestamp.Timestamp,
-  _time_zone: Option(String),
-) -> Result(
-  #(calendar.Date, calendar.TimeOfDay, Bool, duration.Duration, String),
-  Nil,
-) {
-  Error(Nil)
+/// Format a range between two timestamps according to the specified locale and
+/// configuration, returning a `Result` instead of falling back to an error
+/// message.
+///
+/// This is identical to `format_range`, except it lets you handle the
+/// `IntlError` yourself instead of getting a human-readable string when
+/// resolution fails.
+///
+pub fn try_format_range(
+  date_start date_start: timestamp.Timestamp,
+  date_end date_end: timestamp.Timestamp,
+  time_zone time_zone: Option(String),
+  locale locale: Option(String),
+  config config: DateTimeFormatConfig,
+) -> Result(String, IntlError) {
+  raw_format_range(date_start, date_end, time_zone, locale, config)
+}
+
+/// Format a range and return the structured parts of the formatted output.
+///
+/// This mirrors `Intl.DateTimeFormat.prototype.formatRangeToParts`. Parts that
+/// come from the start date, end date, or shared range text are marked with
+/// `source`.
+pub fn format_range_to_parts(
+  date_start date_start: timestamp.Timestamp,
+  date_end date_end: timestamp.Timestamp,
+  time_zone time_zone: Option(String),
+  locale locale: Option(String),
+  config config: DateTimeFormatConfig,
+) -> List(DateTimeFormatPart) {
+  case
+    raw_format_range_to_parts(date_start, date_end, time_zone, locale, config)
+  {
+    Ok(parts) -> parts
+    Error(error) -> [
+      DateTimeFormatPart(
+        kind: DateTimePartLiteral,
+        value: describe_error(error),
+        source: DateTimePartSourceNone,
+      ),
+    ]
+  }
+}
+
+/// Format a range to parts, returning a `Result`.
+pub fn try_format_range_to_parts(
+  date_start date_start: timestamp.Timestamp,
+  date_end date_end: timestamp.Timestamp,
+  time_zone time_zone: Option(String),
+  locale locale: Option(String),
+  config config: DateTimeFormatConfig,
+) -> Result(List(DateTimeFormatPart), IntlError) {
+  raw_format_range_to_parts(date_start, date_end, time_zone, locale, config)
+}
+
+/// Return the options resolved by the date/time formatter.
+///
+/// This mirrors `Intl.DateTimeFormat.prototype.resolvedOptions`.
+pub fn resolved_options(
+  time_zone time_zone: Option(String),
+  locale locale: Option(String),
+  config config: DateTimeFormatConfig,
+) -> Result(DateTimeResolvedOptions, IntlError) {
+  raw_resolved_options(time_zone, locale, config)
 }
 
 @external(javascript, "./intldate.ffi.mjs", "formatTimestamp")
@@ -218,140 +308,301 @@ fn raw_format(
   locale: Option(String),
   config: DateTimeFormatConfig,
 ) -> Result(String, IntlError) {
-  let locale_matcher = case config.locale_matcher {
-    Some(LocaleMatcherLookup) -> locale.Lookup
-    Some(LocaleMatcherBestFit) | None -> locale.BestFit
+  case core.format(date, time_zone, locale, to_icu_config(config)) {
+    Ok(formatted) -> Ok(formatted)
+    Error(error) -> Error(map_icu_error(error))
+  }
+}
+
+@external(javascript, "./intldate.ffi.mjs", "formatTimestampToParts")
+fn raw_format_to_parts(
+  date: timestamp.Timestamp,
+  time_zone: Option(String),
+  locale: Option(String),
+  config: DateTimeFormatConfig,
+) -> Result(List(DateTimeFormatPart), IntlError) {
+  case core.format_to_parts(date, time_zone, locale, to_icu_config(config)) {
+    Ok(parts) -> Ok(list.map(parts, map_icu_date_part))
+    Error(error) -> Error(map_icu_error(error))
+  }
+}
+
+fn to_icu_config(config: DateTimeFormatConfig) -> core.Config {
+  let calendar = case config.calendar {
+    None -> ""
+    Some(_) -> calendar_name(config.calendar)
+  }
+  core.Config(
+    calendar: calendar,
+    weekday: option.map(config.weekday, fn(weekday_value) {
+      case weekday_value {
+        WeekdayLong -> core.StyleLong
+        WeekdayShort -> core.StyleShort
+        WeekdayNarrow -> core.StyleNarrow
+      }
+    }),
+    era: option.map(config.era, fn(era_value) {
+      case era_value {
+        EraLong -> core.StyleLong
+        EraShort -> core.StyleShort
+        EraNarrow -> core.StyleNarrow
+      }
+    }),
+    year: option.map(config.year, fn(year_variant) {
+      case year_variant {
+        YearNumeric -> core.StyleNumeric
+        Year2Digit -> core.StyleTwoDigit
+      }
+    }),
+    month: option.map(config.month, fn(month_variant) {
+      case month_variant {
+        MonthNumeric -> core.MonthNumeric
+        Month2Digit -> core.MonthTwoDigit
+        MonthLong -> core.MonthLong
+        MonthShort -> core.MonthShort
+        MonthNarrow -> core.MonthNarrow
+      }
+    }),
+    day: option.map(config.day, fn(day_variant) {
+      case day_variant {
+        DayNumeric -> core.StyleNumeric
+        Day2Digit -> core.StyleTwoDigit
+      }
+    }),
+    hour: option.map(config.hour, fn(hour_variant) {
+      case hour_variant {
+        HourNumeric -> core.StyleNumeric
+        Hour2Digit -> core.StyleTwoDigit
+      }
+    }),
+    minute: option.map(config.minute, fn(minute_variant) {
+      case minute_variant {
+        MinuteNumeric -> core.StyleNumeric
+        Minute2Digit -> core.StyleTwoDigit
+      }
+    }),
+    second: option.map(config.second, fn(second_variant) {
+      case second_variant {
+        SecondNumeric -> core.StyleNumeric
+        Second2Digit -> core.StyleTwoDigit
+      }
+    }),
+    time_zone_name: option.map(config.time_zone_name, fn(time_zone_name_value) {
+      case time_zone_name_value {
+        TimeZoneNameShort -> core.TimeZoneShort
+        TimeZoneNameLong -> core.TimeZoneLong
+        TimeZoneNameShortOffset -> core.TimeZoneShortOffset
+        TimeZoneNameLongOffset -> core.TimeZoneLongOffset
+        TimeZoneNameShortGeneric -> core.TimeZoneShortGeneric
+        TimeZoneNameLongGeneric -> core.TimeZoneLongGeneric
+      }
+    }),
+    hour12: config.hour12,
+  )
+}
+
+fn map_icu_error(error: icu.IcuError) -> IntlError {
+  case error {
+    icu.FailedToLoadTimeZone(inner) -> FailedToLoadTimeZone(inner)
+    icu.FailedToLoadLocale(inner) -> FailedToLoadLocale(inner)
+    icu.FailedToLoadCalendar(inner) -> FailedToLoadCalendar(inner)
+    icu.SystemTimeZoneUnavailable -> SystemTimeZoneUnavailable
+    icu.Unknown(inner) -> Unknown(inner)
+  }
+}
+
+@external(javascript, "./intldate.ffi.mjs", "formatRangeTimestamp")
+fn raw_format_range(
+  date_start: timestamp.Timestamp,
+  date_end: timestamp.Timestamp,
+  time_zone: Option(String),
+  locale: Option(String),
+  config: DateTimeFormatConfig,
+) -> Result(String, IntlError) {
+  case
+    core.format_range(
+      date_start,
+      date_end,
+      time_zone,
+      locale,
+      to_icu_config(config),
+    )
+  {
+    Ok(formatted) -> Ok(formatted)
+    Error(error) -> Error(map_icu_error(error))
+  }
+}
+
+@external(javascript, "./intldate.ffi.mjs", "formatRangeTimestampToParts")
+fn raw_format_range_to_parts(
+  date_start: timestamp.Timestamp,
+  date_end: timestamp.Timestamp,
+  time_zone: Option(String),
+  locale: Option(String),
+  config: DateTimeFormatConfig,
+) -> Result(List(DateTimeFormatPart), IntlError) {
+  case
+    core.format_range_to_parts(
+      date_start,
+      date_end,
+      time_zone,
+      locale,
+      to_icu_config(config),
+    )
+  {
+    Ok(parts) -> Ok(list.map(parts, map_icu_date_part))
+    Error(error) -> Error(map_icu_error(error))
+  }
+}
+
+@external(javascript, "./intldate.ffi.mjs", "dateTimeResolvedOptions")
+fn raw_resolved_options(
+  time_zone: Option(String),
+  locale: Option(String),
+  config: DateTimeFormatConfig,
+) -> Result(DateTimeResolvedOptions, IntlError) {
+  case core.resolved_options(locale, to_icu_config(config)) {
+    Ok(#(pattern, hour_cycle_keyword, numbering_system)) ->
+      Ok(pattern_resolved_options(
+        pattern,
+        hour_cycle_keyword,
+        numbering_system,
+        time_zone,
+        locale,
+        config,
+      ))
+    Error(error) -> Error(map_icu_error(error))
+  }
+}
+
+fn pattern_resolved_options(
+  pattern: String,
+  hour_cycle_keyword: String,
+  numbering_system: String,
+  time_zone: Option(String),
+  locale: Option(String),
+  config: DateTimeFormatConfig,
+) -> DateTimeResolvedOptions {
+  // `hour_cycle_keyword` (core's adjust_pattern/desired_hour) reflects the
+  // hour cycle actually requested via config.hour12 - it is authoritative
+  // whenever non-empty, independent of whether the ICU-resolved pattern
+  // still contains an hour field character (dtptng's skeleton matching can
+  // drop "hour" from the final pattern for unrelated field-conflict reasons
+  // while an explicit hour12 request still determines the reported
+  // hourCycle/hour12, exactly as real ICU/V8 do - confirmed against
+  // intldatenif's native ICU NIF directly). Only fall back to scanning the
+  // resolved pattern text when no explicit hour cycle was requested (e.g.
+  // hour12 left unset), where the locale's own default hour cycle choice is
+  // only observable from what ICU actually put in the pattern.
+  let #(hour_cycle, hour12) = case config.hour {
+    None -> #(None, None)
+    Some(_) ->
+      case hour_cycle_keyword {
+        "h12" -> #(Some("h12"), Some(True))
+        "h23" -> #(Some("h23"), Some(False))
+        "h11" -> #(Some("h11"), Some(True))
+        "h24" -> #(Some("h24"), Some(False))
+        _ -> pattern_hour_cycle(string.to_graphemes(pattern), False)
+      }
   }
 
-  case locale.load_locale(locale, locale_matcher) {
-    Error(_) -> Error(FailedToLoadLocale(locale |> option.unwrap("en")))
-    Ok(locale) ->
-      case resolve_time(date, time_zone) {
-        Error(_) ->
-          Error(case time_zone {
-            Some(zone_name) -> FailedToLoadTimeZone(zone_name)
-            None -> SystemTimeZoneUnavailable
-          })
-        Ok(#(date, time, is_dst, offset, zone_name)) ->
-          case
-            renderer.render_date(
-              locale,
-              renderer.DateTimeFormatConfig(
-                calendar: option.map(config.calendar, fn(calendar_value) {
-                  case calendar_value {
-                    CalendarBuddhist -> chronology.CalendarBuddhist
-                    CalendarChinese -> chronology.CalendarChinese
-                    CalendarCoptic -> chronology.CalendarCoptic
-                    CalendarDangi -> chronology.CalendarDangi
-                    CalendarEthioaa -> chronology.CalendarEthioaa
-                    CalendarEthiopic -> chronology.CalendarEthiopic
-                    CalendarGregory -> chronology.CalendarGregory
-                    CalendarHebrew -> chronology.CalendarHebrew
-                    CalendarIndian -> chronology.CalendarIndian
-                    CalendarIslamic -> chronology.CalendarIslamic
-                    CalendarIslamicUmalqura ->
-                      chronology.CalendarIslamicUmalqura
-                    CalendarIslamicTbla -> chronology.CalendarIslamicTbla
-                    CalendarIslamicCivil -> chronology.CalendarIslamicCivil
-                    CalendarIslamicRgsa -> chronology.CalendarIslamicRgsa
-                    CalendarIso8601 -> chronology.CalendarIso8601
-                    CalendarJapanese -> chronology.CalendarJapanese
-                    CalendarPersian -> chronology.CalendarPersian
-                    CalendarRoc -> chronology.CalendarRoc
-                  }
-                }),
-                weekday: option.map(config.weekday, fn(weekday_value) {
-                  case weekday_value {
-                    WeekdayLong -> renderer.StyleLong
-                    WeekdayShort -> renderer.StyleShort
-                    WeekdayNarrow -> renderer.StyleNarrow
-                  }
-                }),
-                era: option.map(config.era, fn(era_value) {
-                  case era_value {
-                    EraLong -> renderer.StyleLong
-                    EraShort -> renderer.StyleShort
-                    EraNarrow -> renderer.StyleNarrow
-                  }
-                }),
-                year: option.map(config.year, fn(year_variant) {
-                  case year_variant {
-                    YearNumeric -> renderer.StyleNumeric
-                    Year2Digit -> renderer.StyleTwoDigit
-                  }
-                }),
-                month: option.map(config.month, fn(month_variant) {
-                  case month_variant {
-                    MonthNumeric -> renderer.StyleNumeric
-                    Month2Digit -> renderer.StyleTwoDigit
-                    MonthLong -> renderer.StyleLong
-                    MonthShort -> renderer.StyleShort
-                    MonthNarrow -> renderer.StyleNarrow
-                  }
-                }),
-                day: option.map(config.day, fn(day_variant) {
-                  case day_variant {
-                    DayNumeric -> renderer.StyleNumeric
-                    Day2Digit -> renderer.StyleTwoDigit
-                  }
-                }),
-                hour: option.map(config.hour, fn(hour_variant) {
-                  case hour_variant {
-                    HourNumeric -> renderer.StyleNumeric
-                    Hour2Digit -> renderer.StyleTwoDigit
-                  }
-                }),
-                minute: option.map(config.minute, fn(minute_variant) {
-                  case minute_variant {
-                    MinuteNumeric -> renderer.StyleNumeric
-                    Minute2Digit -> renderer.StyleTwoDigit
-                  }
-                }),
-                second: option.map(config.second, fn(second_variant) {
-                  case second_variant {
-                    SecondNumeric -> renderer.StyleNumeric
-                    Second2Digit -> renderer.StyleTwoDigit
-                  }
-                }),
-                time_zone_name: option.map(
-                  config.time_zone_name,
-                  fn(time_zone_name_value) {
-                    case time_zone_name_value {
-                      TimeZoneNameShort -> renderer.TimeZoneNameShort
-                      TimeZoneNameLong -> renderer.TimeZoneNameLong
-                      TimeZoneNameShortOffset ->
-                        renderer.TimeZoneNameShortOffset
-                      TimeZoneNameLongOffset -> renderer.TimeZoneNameLongOffset
-                      TimeZoneNameShortGeneric ->
-                        renderer.TimeZoneNameShortGeneric
-                      TimeZoneNameLongGeneric ->
-                        renderer.TimeZoneNameLongGeneric
-                    }
-                  },
-                ),
-                format_matcher: option.map(
-                  config.format_matcher,
-                  fn(format_matcher_value) {
-                    case format_matcher_value {
-                      FormatMatcherBestFit -> renderer.FormatMatcherBestFit
-                      FormatMatcherBasic -> renderer.FormatMatcherBasic
-                    }
-                  },
-                ),
-                hour12: config.hour12,
-              ),
-              date,
-              time,
-              is_dst,
-              offset,
-              zone_name,
-            )
-          {
-            Ok(formatted) -> Ok(formatted)
-            Error(_) ->
-              Error(FailedToLoadCalendar(calendar_name(config.calendar)))
+  DateTimeResolvedOptions(
+    locale: option.unwrap(locale, ""),
+    calendar: resolved_calendar_name(config.calendar),
+    numbering_system:,
+    time_zone: option.unwrap(time_zone, ""),
+    hour_cycle:,
+    hour12:,
+    weekday: pattern_value(pattern, [
+      #("EEEEE", "narrow"),
+      #("EEEE", "long"),
+      #("EEE", "short"),
+      #("ccccc", "narrow"),
+      #("cccc", "long"),
+      #("ccc", "short"),
+    ]),
+    era: pattern_value(pattern, [
+      #("GGGGG", "narrow"),
+      #("GGGG", "long"),
+      #("GGG", "short"),
+    ]),
+    year: pattern_value(pattern, [#("yy", "2-digit"), #("y", "numeric")]),
+    month: pattern_value(pattern, [
+      #("MMMMM", "narrow"),
+      #("MMMM", "long"),
+      #("MMM", "short"),
+      #("MM", "2-digit"),
+      #("M", "numeric"),
+      #("LLLLL", "narrow"),
+      #("LLLL", "long"),
+      #("LLL", "short"),
+      #("LL", "2-digit"),
+      #("L", "numeric"),
+    ]),
+    day: pattern_value(pattern, [#("dd", "2-digit"), #("d", "numeric")]),
+    hour: pattern_value(pattern, [
+      #("HH", "2-digit"),
+      #("H", "numeric"),
+      #("hh", "2-digit"),
+      #("h", "numeric"),
+      #("kk", "2-digit"),
+      #("k", "numeric"),
+      #("KK", "2-digit"),
+      #("K", "numeric"),
+    ]),
+    minute: pattern_value(pattern, [#("mm", "2-digit"), #("m", "numeric")]),
+    second: pattern_value(pattern, [#("ss", "2-digit"), #("s", "numeric")]),
+    time_zone_name: pattern_value(pattern, [
+      #("zzzz", "long"),
+      #("z", "short"),
+      #("OOOO", "longOffset"),
+      #("O", "shortOffset"),
+      #("vvvv", "longGeneric"),
+      #("v", "shortGeneric"),
+    ]),
+  )
+}
+
+fn pattern_value(
+  pattern: String,
+  pairs: List(#(String, String)),
+) -> Option(String) {
+  case pairs {
+    [] -> None
+    [#(symbol, value), ..rest] ->
+      case string.contains(pattern, symbol) {
+        True -> Some(value)
+        False -> pattern_value(pattern, rest)
+      }
+  }
+}
+
+fn pattern_hour_cycle(
+  graphemes: List(String),
+  in_quote: Bool,
+) -> #(Option(String), Option(Bool)) {
+  case graphemes {
+    [] -> #(None, None)
+    ["'", ..rest] -> pattern_hour_cycle(rest, !in_quote)
+    [char, ..rest] ->
+      case in_quote {
+        True -> pattern_hour_cycle(rest, True)
+        False ->
+          case char {
+            "h" -> #(Some("h12"), Some(True))
+            "K" -> #(Some("h11"), Some(True))
+            "H" -> #(Some("h23"), Some(False))
+            "k" -> #(Some("h24"), Some(False))
+            _ -> pattern_hour_cycle(rest, False)
           }
       }
+  }
+}
+
+fn resolved_calendar_name(calendar: Option(Calendar)) -> String {
+  case calendar {
+    None -> "gregory"
+    Some(_) -> calendar_name(calendar)
   }
 }
 
@@ -377,6 +628,100 @@ fn calendar_name(calendar: Option(Calendar)) -> String {
     Some(CalendarPersian) -> "persian"
     Some(CalendarRoc) -> "roc"
   }
+}
+
+fn map_icu_date_part(part: core.DateTimePart) -> DateTimeFormatPart {
+  DateTimeFormatPart(
+    kind: date_part_kind(part.kind),
+    value: part.value,
+    source: date_part_source(part.source),
+  )
+}
+
+fn date_part_kind(kind: String) -> DateTimePartKind {
+  case kind {
+    "literal" -> DateTimePartLiteral
+    "weekday" -> DateTimePartWeekday
+    "era" -> DateTimePartEra
+    "year" -> DateTimePartYear
+    "relatedYear" -> DateTimePartRelatedYear
+    "yearName" -> DateTimePartYearName
+    "month" -> DateTimePartMonth
+    "day" -> DateTimePartDay
+    "dayPeriod" -> DateTimePartDayPeriod
+    "hour" -> DateTimePartHour
+    "minute" -> DateTimePartMinute
+    "second" -> DateTimePartSecond
+    "fractionalSecond" -> DateTimePartFractionalSecond
+    "timeZoneName" -> DateTimePartTimeZoneName
+    other -> DateTimePartUnknown(other)
+  }
+}
+
+fn date_part_source(source: String) -> DateTimePartSource {
+  case source {
+    "startRange" -> DateTimePartSourceStartRange
+    "shared" -> DateTimePartSourceShared
+    "endRange" -> DateTimePartSourceEndRange
+    _ -> DateTimePartSourceNone
+  }
+}
+
+/// A part type returned by `format_to_parts` and `format_range_to_parts`.
+pub type DateTimePartKind {
+  DateTimePartLiteral
+  DateTimePartWeekday
+  DateTimePartEra
+  DateTimePartYear
+  DateTimePartRelatedYear
+  DateTimePartYearName
+  DateTimePartMonth
+  DateTimePartDay
+  DateTimePartDayPeriod
+  DateTimePartHour
+  DateTimePartMinute
+  DateTimePartSecond
+  DateTimePartFractionalSecond
+  DateTimePartTimeZoneName
+  DateTimePartUnknown(inner: String)
+}
+
+/// Where a range part came from.
+pub type DateTimePartSource {
+  DateTimePartSourceNone
+  DateTimePartSourceStartRange
+  DateTimePartSourceShared
+  DateTimePartSourceEndRange
+}
+
+/// One structured part of a formatted date/time string.
+pub type DateTimeFormatPart {
+  DateTimeFormatPart(
+    kind: DateTimePartKind,
+    value: String,
+    source: DateTimePartSource,
+  )
+}
+
+/// Options resolved by a date/time formatter.
+pub type DateTimeResolvedOptions {
+  DateTimeResolvedOptions(
+    locale: String,
+    calendar: String,
+    numbering_system: String,
+    time_zone: String,
+    hour_cycle: Option(String),
+    hour12: Option(Bool),
+    weekday: Option(String),
+    era: Option(String),
+    year: Option(String),
+    month: Option(String),
+    day: Option(String),
+    hour: Option(String),
+    minute: Option(String),
+    second: Option(String),
+    time_zone_name: Option(String),
+  )
 }
 
 /// The locale matching algorithm to use.

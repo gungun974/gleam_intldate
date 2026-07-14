@@ -1,24 +1,12 @@
+import gleam/list
 import gleam/option
+import gleam/string
 import gleam/time/timestamp
 import gleeunit
 import intldate
-@target(erlang)
-import zones
 
 pub fn main() -> Nil {
-  let _ = configure_test_timezone()
-
   gleeunit.main()
-}
-
-@external(erlang, "intldate_test", "do_configure_test_timezone")
-fn configure_test_timezone() -> Nil {
-  Nil
-}
-
-@target(erlang)
-pub fn do_configure_test_timezone() {
-  intldate.set_time_zone_database(zones.database())
 }
 
 pub fn format_full_date_with_utc_timezone_fr_test() {
@@ -39,6 +27,56 @@ pub fn format_full_date_with_utc_timezone_fr_test() {
     )
 
   assert result == "mardi 24 février 2026 à 13:48"
+}
+
+pub fn format_to_parts_reconstructs_format_en_test() {
+  let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
+  let config =
+    intldate.new()
+    |> intldate.with_year(intldate.YearNumeric)
+    |> intldate.with_month(intldate.MonthLong)
+    |> intldate.with_day(intldate.DayNumeric)
+
+  let formatted =
+    intldate.format(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("en-US"),
+      config:,
+    )
+
+  let reconstructed =
+    intldate.format_to_parts(
+      date:,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("en-US"),
+      config:,
+    )
+    |> list.map(fn(part) { part.value })
+    |> string.concat
+
+  assert reconstructed == formatted
+}
+
+pub fn resolved_options_date_time_test() {
+  let result =
+    intldate.resolved_options(
+      time_zone: option.Some("UTC"),
+      locale: option.Some("en-US"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarGregory)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric),
+    )
+
+  let assert Ok(options) = result
+  assert options.locale == "en-US"
+  assert options.calendar == "gregory"
+  assert options.time_zone == "UTC"
+  assert options.year == option.Some("numeric")
+  assert options.month == option.Some("long")
+  assert options.day == option.Some("numeric")
 }
 
 pub fn format_full_date_implicit_utc_conversion_fr_test() {
@@ -473,6 +511,62 @@ pub fn format_with_timezone_name_long_offset_test() {
     )
 
   assert result == "July 15, 2026 at 6 AM GMT-07:00"
+}
+
+pub fn dst_spring_forward_boundary_america_new_york_test() {
+  let assert Ok(before) = timestamp.parse_rfc3339("2024-03-10T06:59:00+00:00")
+  let assert Ok(at) = timestamp.parse_rfc3339("2024-03-10T07:00:00+00:00")
+
+  let config =
+    intldate.new()
+    |> intldate.with_hour(intldate.HourNumeric)
+    |> intldate.with_time_zone_name(intldate.TimeZoneNameLongOffset)
+
+  let before_result =
+    intldate.format(
+      date: before,
+      time_zone: option.Some("America/New_York"),
+      locale: option.Some("en-US"),
+      config:,
+    )
+  let at_result =
+    intldate.format(
+      date: at,
+      time_zone: option.Some("America/New_York"),
+      locale: option.Some("en-US"),
+      config:,
+    )
+
+  assert before_result == "1 AM GMT-05:00"
+  assert at_result == "3 AM GMT-04:00"
+}
+
+pub fn dst_fall_back_boundary_america_new_york_test() {
+  let assert Ok(before) = timestamp.parse_rfc3339("2024-11-03T05:59:00+00:00")
+  let assert Ok(at) = timestamp.parse_rfc3339("2024-11-03T06:00:00+00:00")
+
+  let config =
+    intldate.new()
+    |> intldate.with_hour(intldate.HourNumeric)
+    |> intldate.with_time_zone_name(intldate.TimeZoneNameLongOffset)
+
+  let before_result =
+    intldate.format(
+      date: before,
+      time_zone: option.Some("America/New_York"),
+      locale: option.Some("en-US"),
+      config:,
+    )
+  let at_result =
+    intldate.format(
+      date: at,
+      time_zone: option.Some("America/New_York"),
+      locale: option.Some("en-US"),
+      config:,
+    )
+
+  assert before_result == "1 AM GMT-04:00"
+  assert at_result == "1 AM GMT-05:00"
 }
 
 pub fn format_with_timezone_name_short_generic_test() {

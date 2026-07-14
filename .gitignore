@@ -4,6 +4,15 @@
 erl_crash.dump
 
 /src/intldate/internal/local
-/priv/locale
-/priv/chinese.etf
+/priv/icudata
+/scripts/icu/.cache
+/scripts/icu/out
+/test/format.json
+/test/format_range.json
+/test/relative.json
+/test/format_parts.json
+/test/format_range_parts.json
+/test/relative_parts.json
+/test/resolved_options.json
+/test/relative_resolved_options.json
 node_modules

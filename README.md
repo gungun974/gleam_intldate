@@ -104,40 +104,29 @@ pub fn main() {
 }
 ```
 
-## Time zone database on Erlang
+## More than just `format`
 
-On Erlang, resolving a time zone requires an IANA `TzDatabase`. By default, `intldate`
-tries to load one from the operating system (typically `/usr/share/zoneinfo`). If the
-OS has no such data, formatting fails with `FailedToLoadTimeZone`.
+Both modules mirror more of their `Intl` counterparts than the basic example above:
 
-To avoid depending on what is installed on the host machine, call
-`intldate.set_time_zone_database` once at startup with a database of your choice, for
-example the one bundled by the [`zones`](https://hex.pm/packages/zones) package, which
-ships a full copy of the IANA time zone database:
+- `intldate.format_to_parts` / `intlrelative.format_to_parts` — structured parts,
+  like `Intl.DateTimeFormat.prototype.formatToParts` / `formatToParts`.
+- `intldate.format_range` / `intldate.format_range_to_parts` — format a date range
+  together, collapsing the parts the two dates share, like
+  `Intl.DateTimeFormat.prototype.formatRange` / `formatRangeToParts`.
+- `intldate.resolved_options` / `intlrelative.resolved_options` — the options
+  actually resolved for a given locale/config, like
+  `Intl.DateTimeFormat.prototype.resolvedOptions` / `resolvedOptions`.
 
-```sh
-gleam add zones
-```
-```gleam
-import intldate
-import zones
-
-pub fn main() {
-  intldate.set_time_zone_database(zones.database())
-
-  // ... the rest of your application
-}
-```
-
-This has no effect on JavaScript, where time zones are resolved by the native
-`Intl.DateTimeFormat()`.
+Each has a `try_*` variant returning a `Result` instead of an error message, same as
+`try_format`.
 
 Further documentation can be found at <https://hexdocs.pm/intldate>.
 
 ## Development
 
-The locale data under `priv/` is generated from the CLDR packages and is not
-committed, so you need to build it before running the tests:
+The locale data under `priv/` is generated from ICU's own data (downloaded from
+a pinned ICU release) and is not committed, so you need to build it before
+running the tests:
 
 ```sh
 git clone https://github.com/gungun974/gleam_intldate.git
@@ -146,5 +135,10 @@ cd gleam_intldate
 pnpm install
 pnpm run generate
 
+gleam run -m intldate_test_data --target javascript
 gleam test
 ```
+
+`gleam run -m intldate_test_data --target javascript` generates the test data from
+Node's built-in `Intl`, so it requires a Node version bundling ICU 78.3 to match the
+pinned ICU release used elsewhere.

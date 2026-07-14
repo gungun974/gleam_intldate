@@ -1,7 +1,12 @@
-import { Option$isSome, Option$Some$0 } from "../gleam_stdlib/gleam/option.mjs";
+import {
+  Option$isSome,
+  Option$Some$0,
+  Option$Some,
+  Option$None,
+} from "../gleam_stdlib/gleam/option.mjs";
 import * as $timestamp from "../gleam_time/gleam/time/timestamp.mjs";
 import * as $duration from "../gleam_time/gleam/time/duration.mjs";
-import { Result$Ok, Result$Error } from "./gleam.mjs";
+import { Result$Ok, Result$Error, toList } from "./gleam.mjs";
 import {
   LocaleMatcher$isLocaleMatcherBestFit as Relative$LocaleMatcher$isLocaleMatcherBestFit,
   LocaleMatcher$isLocaleMatcherLookup as Relative$LocaleMatcher$isLocaleMatcherLookup,
@@ -23,6 +28,14 @@ import {
   RelativeTimeFormatConfig$RelativeTimeFormatConfig$locale_matcher,
   RelativeTimeFormatConfig$RelativeTimeFormatConfig$style,
   RelativeTimeFormatConfig$RelativeTimeFormatConfig$numeric,
+  RelativeTimePartKind$RelativeTimePartLiteral,
+  RelativeTimePartKind$RelativeTimePartInteger,
+  RelativeTimePartKind$RelativeTimePartFraction,
+  RelativeTimePartKind$RelativeTimePartDecimal,
+  RelativeTimePartKind$RelativeTimePartUnit,
+  RelativeTimePartKind$RelativeTimePartUnknown,
+  RelativeTimeFormatPart$RelativeTimeFormatPart,
+  RelativeTimeResolvedOptions$RelativeTimeResolvedOptions,
 } from "./intlrelative.mjs";
 import {
   LocaleMatcher$isLocaleMatcherBestFit,
@@ -91,9 +104,37 @@ import {
   DateTimeFormatConfig$DateTimeFormatConfig$time_zone_name,
   DateTimeFormatConfig$DateTimeFormatConfig$format_matcher,
   DateTimeFormatConfig$DateTimeFormatConfig$hour12,
+  DateTimePartKind$DateTimePartLiteral,
+  DateTimePartKind$DateTimePartWeekday,
+  DateTimePartKind$DateTimePartEra,
+  DateTimePartKind$DateTimePartYear,
+  DateTimePartKind$DateTimePartRelatedYear,
+  DateTimePartKind$DateTimePartYearName,
+  DateTimePartKind$DateTimePartMonth,
+  DateTimePartKind$DateTimePartDay,
+  DateTimePartKind$DateTimePartDayPeriod,
+  DateTimePartKind$DateTimePartHour,
+  DateTimePartKind$DateTimePartMinute,
+  DateTimePartKind$DateTimePartSecond,
+  DateTimePartKind$DateTimePartFractionalSecond,
+  DateTimePartKind$DateTimePartTimeZoneName,
+  DateTimePartKind$DateTimePartUnknown,
+  DateTimePartSource$DateTimePartSourceNone,
+  DateTimePartSource$DateTimePartSourceStartRange,
+  DateTimePartSource$DateTimePartSourceShared,
+  DateTimePartSource$DateTimePartSourceEndRange,
+  DateTimeFormatPart$DateTimeFormatPart,
+  DateTimeResolvedOptions$DateTimeResolvedOptions,
 } from "./intldate.mjs";
 
-export function formatTimestamp(timestamp, timeZone, locale, config) {
+function timestampToDate(timestamp) {
+  const unix = $timestamp.to_unix_seconds_and_nanoseconds(timestamp);
+  const seconds = unix[0];
+  const nanoseconds = unix[1];
+  return new Date(seconds * 1000 + Math.trunc(nanoseconds / 1_000_000));
+}
+
+function buildDateTimeFormatOptions(config) {
   const locale_matcher =
     DateTimeFormatConfig$DateTimeFormatConfig$locale_matcher(config);
   const calendar = DateTimeFormatConfig$DateTimeFormatConfig$calendar(config);
@@ -342,10 +383,85 @@ export function formatTimestamp(timestamp, timeZone, locale, config) {
     }
   }
 
-  const unix = $timestamp.to_unix_seconds_and_nanoseconds(timestamp);
-  const seconds = unix[0];
-  const nanoseconds = unix[1];
-  const date = new Date(seconds * 1000 + Math.trunc(nanoseconds / 1_000_000));
+  return {
+    localeMatcher,
+    calendar: calendarValue,
+    weekday: weekdayValue,
+    era: eraValue,
+    year: yearValue,
+    month: monthValue,
+    day: dayValue,
+    hour: hourValue,
+    minute: minuteValue,
+    second: secondValue,
+    timeZoneName: timeZoneNameValue,
+    formatMatcher: formatMatcherValue,
+    hour12: Option$isSome(hour12) ? Option$Some$0(hour12) : undefined,
+  };
+}
+
+function someIfPresent(value) {
+  return value === undefined ? Option$None() : Option$Some(value);
+}
+
+function dateTimePartKind(type) {
+  switch (type) {
+    case "literal":
+      return DateTimePartKind$DateTimePartLiteral();
+    case "weekday":
+      return DateTimePartKind$DateTimePartWeekday();
+    case "era":
+      return DateTimePartKind$DateTimePartEra();
+    case "year":
+      return DateTimePartKind$DateTimePartYear();
+    case "relatedYear":
+      return DateTimePartKind$DateTimePartRelatedYear();
+    case "yearName":
+      return DateTimePartKind$DateTimePartYearName();
+    case "month":
+      return DateTimePartKind$DateTimePartMonth();
+    case "day":
+      return DateTimePartKind$DateTimePartDay();
+    case "dayPeriod":
+      return DateTimePartKind$DateTimePartDayPeriod();
+    case "hour":
+      return DateTimePartKind$DateTimePartHour();
+    case "minute":
+      return DateTimePartKind$DateTimePartMinute();
+    case "second":
+      return DateTimePartKind$DateTimePartSecond();
+    case "fractionalSecond":
+      return DateTimePartKind$DateTimePartFractionalSecond();
+    case "timeZoneName":
+      return DateTimePartKind$DateTimePartTimeZoneName();
+    default:
+      return DateTimePartKind$DateTimePartUnknown(type);
+  }
+}
+
+function dateTimePartSource(source) {
+  switch (source) {
+    case "startRange":
+      return DateTimePartSource$DateTimePartSourceStartRange();
+    case "shared":
+      return DateTimePartSource$DateTimePartSourceShared();
+    case "endRange":
+      return DateTimePartSource$DateTimePartSourceEndRange();
+    default:
+      return DateTimePartSource$DateTimePartSourceNone();
+  }
+}
+
+function dateTimePart(part) {
+  return DateTimeFormatPart$DateTimeFormatPart(
+    dateTimePartKind(part.type),
+    part.value,
+    dateTimePartSource(part.source),
+  );
+}
+
+function buildDateTimeFormatter(timeZone, locale, config) {
+  const options = buildDateTimeFormatOptions(config);
   const localeStr = Option$isSome(locale) ? Option$Some$0(locale) : undefined;
   const timeZoneStr = Option$isSome(timeZone)
     ? Option$Some$0(timeZone)
@@ -355,31 +471,169 @@ export function formatTimestamp(timestamp, timeZone, locale, config) {
     localeStr &&
     Intl.DateTimeFormat.supportedLocalesOf([localeStr]).length === 0
   ) {
-    return Result$Error(IntlError$FailedToLoadLocale(localeStr));
+    return {
+      error: IntlError$FailedToLoadLocale(localeStr),
+      localeStr,
+      timeZoneStr,
+      options,
+    };
   }
 
   try {
-    const formatter = new Intl.DateTimeFormat(localeStr, {
-      localeMatcher,
-      calendar: calendarValue,
-      weekday: weekdayValue,
-      era: eraValue,
-      year: yearValue,
-      month: monthValue,
-      day: dayValue,
-      hour: hourValue,
-      minute: minuteValue,
-      second: secondValue,
-      timeZoneName: timeZoneNameValue,
-      formatMatcher: formatMatcherValue,
-      hour12: Option$isSome(hour12) ? Option$Some$0(hour12) : undefined,
-      timeZone: timeZoneStr,
-    });
+    return {
+      formatter: new Intl.DateTimeFormat(localeStr, {
+        ...options,
+        timeZone: timeZoneStr,
+      }),
+      localeStr,
+      timeZoneStr,
+      options,
+    };
+  } catch (error) {
+    return {
+      error: castError(error, {
+        localeStr,
+        timeZoneStr,
+        calendarValue: options.calendar,
+      }),
+      localeStr,
+      timeZoneStr,
+      options,
+    };
+  }
+}
 
-    return Result$Ok(formatter.format(date));
+export function formatTimestamp(timestamp, timeZone, locale, config) {
+  const date = timestampToDate(timestamp);
+  const built = buildDateTimeFormatter(timeZone, locale, config);
+
+  if (built.error) return Result$Error(built.error);
+
+  try {
+    return Result$Ok(built.formatter.format(date));
   } catch (error) {
     return Result$Error(
-      castError(error, { localeStr, timeZoneStr, calendarValue }),
+      castError(error, {
+        localeStr: built.localeStr,
+        timeZoneStr: built.timeZoneStr,
+        calendarValue: built.options.calendar,
+      }),
+    );
+  }
+}
+
+export function formatTimestampToParts(timestamp, timeZone, locale, config) {
+  const date = timestampToDate(timestamp);
+  const built = buildDateTimeFormatter(timeZone, locale, config);
+
+  if (built.error) return Result$Error(built.error);
+
+  try {
+    return Result$Ok(
+      toList(built.formatter.formatToParts(date).map(dateTimePart)),
+    );
+  } catch (error) {
+    return Result$Error(
+      castError(error, {
+        localeStr: built.localeStr,
+        timeZoneStr: built.timeZoneStr,
+        calendarValue: built.options.calendar,
+      }),
+    );
+  }
+}
+
+export function formatRangeTimestamp(
+  startTimestamp,
+  endTimestamp,
+  timeZone,
+  locale,
+  config,
+) {
+  const startDate = timestampToDate(startTimestamp);
+  const endDate = timestampToDate(endTimestamp);
+  const built = buildDateTimeFormatter(timeZone, locale, config);
+
+  if (built.error) return Result$Error(built.error);
+
+  try {
+    return Result$Ok(built.formatter.formatRange(startDate, endDate));
+  } catch (error) {
+    return Result$Error(
+      castError(error, {
+        localeStr: built.localeStr,
+        timeZoneStr: built.timeZoneStr,
+        calendarValue: built.options.calendar,
+      }),
+    );
+  }
+}
+
+export function formatRangeTimestampToParts(
+  startTimestamp,
+  endTimestamp,
+  timeZone,
+  locale,
+  config,
+) {
+  const startDate = timestampToDate(startTimestamp);
+  const endDate = timestampToDate(endTimestamp);
+  const built = buildDateTimeFormatter(timeZone, locale, config);
+
+  if (built.error) return Result$Error(built.error);
+
+  try {
+    return Result$Ok(
+      toList(
+        built.formatter
+          .formatRangeToParts(startDate, endDate)
+          .map(dateTimePart),
+      ),
+    );
+  } catch (error) {
+    return Result$Error(
+      castError(error, {
+        localeStr: built.localeStr,
+        timeZoneStr: built.timeZoneStr,
+        calendarValue: built.options.calendar,
+      }),
+    );
+  }
+}
+
+export function dateTimeResolvedOptions(timeZone, locale, config) {
+  const built = buildDateTimeFormatter(timeZone, locale, config);
+
+  if (built.error) return Result$Error(built.error);
+
+  try {
+    const options = built.formatter.resolvedOptions();
+    return Result$Ok(
+      DateTimeResolvedOptions$DateTimeResolvedOptions(
+        options.locale,
+        options.calendar,
+        options.numberingSystem,
+        options.timeZone,
+        someIfPresent(options.hourCycle),
+        someIfPresent(options.hour12),
+        someIfPresent(options.weekday),
+        someIfPresent(options.era),
+        someIfPresent(options.year),
+        someIfPresent(options.month),
+        someIfPresent(options.day),
+        someIfPresent(options.hour),
+        someIfPresent(options.minute),
+        someIfPresent(options.second),
+        someIfPresent(options.timeZoneName),
+      ),
+    );
+  } catch (error) {
+    return Result$Error(
+      castError(error, {
+        localeStr: built.localeStr,
+        timeZoneStr: built.timeZoneStr,
+        calendarValue: built.options.calendar,
+      }),
     );
   }
 }
@@ -395,7 +649,53 @@ const RELATIVE_UNIT_SECONDS = {
   year: 31556952,
 };
 
-export function formatDuration(duration, unit, locale, config) {
+function relativeUnitName(unit) {
+  switch (true) {
+    case Unit$isSecond(unit):
+      return "second";
+    case Unit$isMinute(unit):
+      return "minute";
+    case Unit$isHour(unit):
+      return "hour";
+    case Unit$isDay(unit):
+      return "day";
+    case Unit$isWeek(unit):
+      return "week";
+    case Unit$isMonth(unit):
+      return "month";
+    case Unit$isQuarter(unit):
+      return "quarter";
+    case Unit$isYear(unit):
+      return "year";
+  }
+}
+
+function relativePartKind(type) {
+  switch (type) {
+    case "literal":
+      return RelativeTimePartKind$RelativeTimePartLiteral();
+    case "integer":
+      return RelativeTimePartKind$RelativeTimePartInteger();
+    case "fraction":
+      return RelativeTimePartKind$RelativeTimePartFraction();
+    case "decimal":
+      return RelativeTimePartKind$RelativeTimePartDecimal();
+    case "unit":
+      return RelativeTimePartKind$RelativeTimePartUnit();
+    default:
+      return RelativeTimePartKind$RelativeTimePartUnknown(type);
+  }
+}
+
+function relativePart(part) {
+  return RelativeTimeFormatPart$RelativeTimeFormatPart(
+    relativePartKind(part.type),
+    part.value,
+    someIfPresent(part.unit),
+  );
+}
+
+function buildRelativeTimeFormatOptions(config) {
   const locale_matcher =
     RelativeTimeFormatConfig$RelativeTimeFormatConfig$locale_matcher(config);
   const style = RelativeTimeFormatConfig$RelativeTimeFormatConfig$style(config);
@@ -444,60 +744,123 @@ export function formatDuration(duration, unit, locale, config) {
     }
   }
 
-  let unitValue = undefined;
-  switch (true) {
-    case Unit$isSecond(unit):
-      unitValue = "second";
-      break;
-    case Unit$isMinute(unit):
-      unitValue = "minute";
-      break;
-    case Unit$isHour(unit):
-      unitValue = "hour";
-      break;
-    case Unit$isDay(unit):
-      unitValue = "day";
-      break;
-    case Unit$isWeek(unit):
-      unitValue = "week";
-      break;
-    case Unit$isMonth(unit):
-      unitValue = "month";
-      break;
-    case Unit$isQuarter(unit):
-      unitValue = "quarter";
-      break;
-    case Unit$isYear(unit):
-      unitValue = "year";
-      break;
-  }
+  return {
+    localeMatcher,
+    style: styleValue,
+    numeric: numericValue,
+  };
+}
 
-  const seconds = $duration.to_seconds(duration);
-  const amount = seconds / RELATIVE_UNIT_SECONDS[unitValue];
-
+function buildRelativeTimeFormatter(locale, config) {
+  const options = buildRelativeTimeFormatOptions(config);
   const localeStr = Option$isSome(locale) ? Option$Some$0(locale) : undefined;
 
   if (
     localeStr &&
     Intl.RelativeTimeFormat.supportedLocalesOf([localeStr]).length === 0
   ) {
-    return Result$Error(Relative$IntlError$FailedToLoadLocale(localeStr));
+    return {
+      error: Relative$IntlError$FailedToLoadLocale(localeStr),
+      localeStr,
+    };
   }
 
   try {
-    const formatter = new Intl.RelativeTimeFormat(localeStr, {
-      localeMatcher,
-      style: styleValue,
-      numeric: numericValue,
-    });
-
-    return Result$Ok(formatter.format(amount, unitValue));
+    return {
+      formatter: new Intl.RelativeTimeFormat(localeStr, options),
+      localeStr,
+      options,
+    };
   } catch (error) {
     const message =
       error instanceof Error && error.message ? error.message : String(error);
 
     if (localeStr && message.includes(localeStr)) {
-      return Result$Error(Relative$IntlError$FailedToLoadLocale(localeStr));
+      return {
+        error: Relative$IntlError$FailedToLoadLocale(localeStr),
+        localeStr,
+      };
+    }
+
+    return { error: Relative$IntlError$Unknown(message), localeStr };
+  }
+}
+
+export function formatDuration(duration, unit, locale, config) {
+  const unitValue = relativeUnitName(unit);
+  const seconds = $duration.to_seconds(duration);
+  const amount = seconds / RELATIVE_UNIT_SECONDS[unitValue];
+  const built = buildRelativeTimeFormatter(locale, config);
+
+  if (built.error) return Result$Error(built.error);
+
+  try {
+    return Result$Ok(built.formatter.format(amount, unitValue));
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message ? error.message : String(error);
+
+    if (built.localeStr && message.includes(built.localeStr)) {
+      return Result$Error(
+        Relative$IntlError$FailedToLoadLocale(built.localeStr),
+      );
+    }
+
+    return Result$Error(Relative$IntlError$Unknown(message));
+  }
+}
+
+export function formatDurationToParts(duration, unit, locale, config) {
+  const unitValue = relativeUnitName(unit);
+  const seconds = $duration.to_seconds(duration);
+  const amount = seconds / RELATIVE_UNIT_SECONDS[unitValue];
+  const built = buildRelativeTimeFormatter(locale, config);
+
+  if (built.error) return Result$Error(built.error);
+
+  try {
+    return Result$Ok(
+      toList(
+        built.formatter.formatToParts(amount, unitValue).map(relativePart),
+      ),
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message ? error.message : String(error);
+
+    if (built.localeStr && message.includes(built.localeStr)) {
+      return Result$Error(
+        Relative$IntlError$FailedToLoadLocale(built.localeStr),
+      );
+    }
+
+    return Result$Error(Relative$IntlError$Unknown(message));
+  }
+}
+
+export function relativeResolvedOptions(locale, config) {
+  const built = buildRelativeTimeFormatter(locale, config);
+
+  if (built.error) return Result$Error(built.error);
+
+  try {
+    const options = built.formatter.resolvedOptions();
+    return Result$Ok(
+      RelativeTimeResolvedOptions$RelativeTimeResolvedOptions(
+        options.locale,
+        options.numberingSystem,
+        options.style,
+        options.numeric,
+      ),
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message ? error.message : String(error);
+
+    if (built.localeStr && message.includes(built.localeStr)) {
+      return Result$Error(
+        Relative$IntlError$FailedToLoadLocale(built.localeStr),
+      );
     }
 
     return Result$Error(Relative$IntlError$Unknown(message));

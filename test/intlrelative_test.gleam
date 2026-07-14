@@ -1,4 +1,6 @@
+import gleam/list
 import gleam/option
+import gleam/string
 import gleam/time/duration
 import intlrelative
 
@@ -12,6 +14,45 @@ pub fn format_past_seconds_fr_test() {
     )
 
   assert result == "il y a 5 secondes"
+}
+
+pub fn format_to_parts_reconstructs_format_en_test() {
+  let config = intlrelative.new()
+
+  let formatted =
+    intlrelative.format(
+      duration: duration.hours(3),
+      unit: intlrelative.Hour,
+      locale: option.Some("en-US"),
+      config:,
+    )
+
+  let reconstructed =
+    intlrelative.format_to_parts(
+      duration: duration.hours(3),
+      unit: intlrelative.Hour,
+      locale: option.Some("en-US"),
+      config:,
+    )
+    |> list.map(fn(part) { part.value })
+    |> string.concat
+
+  assert reconstructed == formatted
+}
+
+pub fn resolved_options_relative_test() {
+  let result =
+    intlrelative.resolved_options(
+      locale: option.Some("en-US"),
+      config: intlrelative.new()
+        |> intlrelative.with_style(intlrelative.Short)
+        |> intlrelative.with_numeric(intlrelative.Auto),
+    )
+
+  let assert Ok(options) = result
+  assert options.locale == "en-US"
+  assert options.style == "short"
+  assert options.numeric == "auto"
 }
 
 pub fn format_future_hours_en_test() {
