@@ -2,10 +2,12 @@ import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
+import intldate/internal/icu/icudata/bundle.{type Bundle}
 import intldate/internal/icu/icudata/bytestrie.{type BytesTrie}
 import intldate/internal/icu/icudata/cache
-import intldate/internal/icu/icudata/resource.{type ResourceData}
+import intldate/internal/icu/icudata/resource
 import intldate/internal/icu/locale/locdistance.{
   type DistanceData, type EncodedLSR, type LikelySubtags, DistanceData,
   EncodedLSR, LikelySubtags,
@@ -20,6 +22,8 @@ pub const pseudo_bidi_prefix = "+"
 pub const pseudo_cracked_prefix = ","
 
 const skip_script = 1
+
+const cache_key = "likely-subtags-state"
 
 const script_short_names = [
   "Zyyy", "Zinh", "Arab", "Armn", "Beng", "Bopo", "Cher", "Copt", "Cyrl", "Dsrt",
@@ -46,23 +50,14 @@ const script_short_names = [
   "Tayo", "Tols", "Hntl",
 ]
 
-fn index_dict(key: String, values: List(a)) -> Dict(Int, a) {
-  case cache.get(key) {
-    Ok(cached) -> cached
-    Error(_) ->
-      cache.put(
-        key,
-        values
-          |> list.index_map(fn(value, i) { #(i, value) })
-          |> dict.from_list,
-      )
-  }
-}
-
 fn script_short_name(code: Int) -> String {
-  case dict.get(index_dict("script_short_names", script_short_names), code) {
-    Ok(name) -> name
-    Error(_) -> ""
+  case code < 0 {
+    True -> ""
+    False ->
+      case list.drop(script_short_names, code) |> list.first {
+        Ok(name) -> name
+        Error(_) -> ""
+      }
   }
 }
 
@@ -212,157 +207,23 @@ fn classify_trie_result(
   }
 }
 
-fn read_string_array(rd: ResourceData, res: Int) -> List(String) {
-  let arr = resource.get_array(rd, res)
-  case arr.get_res {
-    None -> []
-    Some(get_res) -> read_string_array_loop(rd, get_res, 0, arr.length)
-  }
-}
-
-fn read_string_array_loop(
-  rd: ResourceData,
-  get_res: fn(Int) -> Int,
-  i: Int,
-  length: Int,
-) -> List(String) {
-  case i >= length {
-    True -> []
-    False -> {
-      let text = case
-        resource.resource_value_get_string(resource.create_resource_value(
-          Some(rd),
-          get_res(i),
-        ))
-      {
-        Some(s) -> s.text
-        None -> ""
-      }
-      [text, ..read_string_array_loop(rd, get_res, i + 1, length)]
-    }
-  }
-}
-
-fn read_lsr_encoded_array(
-  rd: ResourceData,
-  res: Int,
-  m49_array: Dict(Int, String),
-) -> List(EncodedLSR) {
-  case
-    resource.resource_value_get_int_vector(resource.create_resource_value(
-      Some(rd),
-      res,
-    ))
-  {
-    None -> []
-    Some(vec) ->
-      list.map(vec, fn(v) {
-        EncodedLSR(to_language(v), to_script(v), to_region(m49_array, v))
-      })
-  }
-}
-
-pub type LocaleChainEntry {
-  LocaleChainEntry(name: String, res_data: ResourceData)
-}
-
-pub type MatchLookup {
-  MatchLookup(res_data: ResourceData, res: Int)
-}
-
-pub type Bundle {
-  Bundle(
-    open_direct: fn(String) -> ResourceData,
-    get_by_path: fn(List(LocaleChainEntry), String) -> Option(MatchLookup),
-  )
-}
-
 fn load_match_data(
-  bundle: Bundle,
-  chain: List(LocaleChainEntry),
+  data: resource.LikelySubtagsData,
   m49_array: Dict(Int, String),
 ) -> DistanceData {
-  case bundle.get_by_path(chain, "match") {
-    None -> DistanceData(None, None, [], [], 0, [0, 0, 0, 0])
-    Some(match) -> {
-      let match_table = resource.get_table(match.res_data, match.res)
-      let by_key = table_to_dict(match_table)
+  let paradigms =
+    list.map(data.match_paradigmnum, fn(v) {
+      EncodedLSR(to_language(v), to_script(v), to_region(m49_array, v))
+    })
 
-      let distance_trie_bytes = case dict.get(by_key, "trie") {
-        Ok(res) ->
-          resource.resource_value_get_binary(resource.create_resource_value(
-            Some(match.res_data),
-            res,
-          ))
-        Error(_) -> None
-      }
-      let region_to_partitions = case dict.get(by_key, "regionToPartitions") {
-        Ok(res) ->
-          resource.resource_value_get_binary(resource.create_resource_value(
-            Some(match.res_data),
-            res,
-          ))
-        Error(_) -> None
-      }
-      let partitions = case dict.get(by_key, "partitions") {
-        Ok(res) -> read_string_array(match.res_data, res)
-        Error(_) -> []
-      }
-      let paradigms = case dict.get(by_key, "paradigmnum") {
-        Ok(res) -> read_lsr_encoded_array(match.res_data, res, m49_array)
-        Error(_) -> []
-      }
-      let distances = case dict.get(by_key, "distances") {
-        Ok(res) ->
-          case
-            resource.resource_value_get_int_vector(
-              resource.create_resource_value(Some(match.res_data), res),
-            )
-          {
-            Some(vec) -> vec
-            None -> [0, 0, 0, 0]
-          }
-        Error(_) -> [0, 0, 0, 0]
-      }
-
-      DistanceData(
-        distance_trie_bytes:,
-        region_to_partitions:,
-        partitions:,
-        paradigms:,
-        paradigms_length: list.length(paradigms),
-        distances:,
-      )
-    }
-  }
-}
-
-fn table_to_dict(table: resource.ResourceTableView) -> Dict(String, Int) {
-  case table.get_key, table.get_res {
-    Some(get_key), Some(get_res) ->
-      table_to_dict_loop(get_key, get_res, 0, table.length, dict.new())
-    _, _ -> dict.new()
-  }
-}
-
-fn table_to_dict_loop(
-  get_key: fn(Int) -> String,
-  get_res: fn(Int) -> Int,
-  i: Int,
-  length: Int,
-  acc: Dict(String, Int),
-) -> Dict(String, Int) {
-  case i >= length {
-    True -> acc
-    False ->
-      table_to_dict_loop(
-        get_key,
-        get_res,
-        i + 1,
-        length,
-        dict.insert(acc, get_key(i), get_res(i)),
-      )
-  }
+  DistanceData(
+    distance_trie_bytes: Some(data.match_trie),
+    region_to_partitions: Some(data.match_region_to_partitions),
+    partitions: data.match_partitions,
+    paradigms:,
+    paradigms_length: list.length(paradigms),
+    distances: data.match_distances,
+  )
 }
 
 pub type MaximizeSubtagsResult {
@@ -772,140 +633,64 @@ pub fn get_distance_data(state: LikelySubtagsState) -> DistanceData {
 pub fn create_likely_subtags(
   bundle: Bundle,
 ) -> Result(LikelySubtagsState, String) {
-  let rd = bundle.open_direct("langInfo")
-  let chain = [LocaleChainEntry("langInfo", rd)]
-  case bundle.get_by_path(chain, "likely") {
-    None -> Error("likelySubtags: missing likely table")
-    Some(likely) -> {
-      let table = resource.get_table(likely.res_data, likely.res)
-      let by_key = table_to_dict(table)
-
-      case dict.get(by_key, "m49") {
-        Error(_) -> Error("likelySubtags: missing m49")
-        Ok(m49_res) -> {
-          let m49_array =
-            read_string_array(likely.res_data, m49_res)
-            |> list.index_map(fn(value, i) { #(i, value) })
-            |> dict.from_list
-
-          case dict.get(by_key, "lsrnum") {
-            Error(_) -> Error("likelySubtags: missing lsrnum")
-            Ok(lsrnum_res) -> {
-              case
-                resource.resource_value_get_int_vector(
-                  resource.create_resource_value(
-                    Some(likely.res_data),
-                    lsrnum_res,
-                  ),
-                )
-              {
-                None -> Error("likelySubtags: bad lsrnum")
-                Some(lsrnum) -> {
-                  let lsrs =
-                    list.map(lsrnum, fn(v) {
-                      lsr.create_lsr(
-                        to_language(v),
-                        to_script(v),
-                        to_region(m49_array, v),
-                        lsr.implicit_lsr,
-                      )
-                    })
-
-                  let language_aliases = case
-                    dict.get(by_key, "languageAliases")
-                  {
-                    Error(_) -> dict.new()
-                    Ok(res) -> read_alias_map(likely.res_data, res)
-                  }
-                  let region_aliases = case dict.get(by_key, "regionAliases") {
-                    Error(_) -> dict.new()
-                    Ok(res) -> read_alias_map(likely.res_data, res)
-                  }
-
-                  case dict.get(by_key, "trie") {
-                    Error(_) -> Error("likelySubtags: missing trie")
-                    Ok(trie_res) ->
-                      case
-                        resource.resource_value_get_binary(
-                          resource.create_resource_value(
-                            Some(likely.res_data),
-                            trie_res,
-                          ),
-                        )
-                      {
-                        None -> Error("likelySubtags: bad trie")
-                        Some(trie_buf) ->
-                          build_likely_subtags_state(
-                            bundle,
-                            chain,
-                            m49_array,
-                            lsrs,
-                            language_aliases,
-                            region_aliases,
-                            trie_buf,
-                          )
-                      }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+  case cache.get(cache_key) {
+    Ok(state) -> Ok(state)
+    Error(_) -> {
+      use state <- result.try(create_likely_subtags_uncached(bundle))
+      Ok(cache.put(cache_key, state))
     }
   }
 }
 
-fn read_alias_map(rd: ResourceData, res: Int) -> Dict(String, String) {
-  let arr = resource.get_array(rd, res)
-  case arr.get_res {
-    None -> dict.new()
-    Some(get_res) -> read_alias_map_loop(rd, get_res, 0, arr.length, dict.new())
-  }
+fn create_likely_subtags_uncached(
+  bundle: Bundle,
+) -> Result(LikelySubtagsState, String) {
+  let data = bundle.likely_subtags
+
+  let m49_array =
+    data.m49
+    |> list.index_map(fn(value, i) { #(i, value) })
+    |> dict.from_list
+
+  let lsrs =
+    list.map(data.lsrnum, fn(v) {
+      lsr.create_lsr(
+        to_language(v),
+        to_script(v),
+        to_region(m49_array, v),
+        lsr.implicit_lsr,
+      )
+    })
+
+  let language_aliases = pairs_to_dict(data.language_aliases)
+  let region_aliases = pairs_to_dict(data.region_aliases)
+
+  build_likely_subtags_state(
+    data,
+    m49_array,
+    lsrs,
+    language_aliases,
+    region_aliases,
+    data.trie,
+  )
 }
 
-fn read_alias_map_loop(
-  rd: ResourceData,
-  get_res: fn(Int) -> Int,
-  i: Int,
-  length: Int,
+fn pairs_to_dict(values: List(String)) -> Dict(String, String) {
+  pairs_to_dict_loop(values, dict.new())
+}
+
+fn pairs_to_dict_loop(
+  values: List(String),
   acc: Dict(String, String),
 ) -> Dict(String, String) {
-  case i + 1 >= length {
-    True -> acc
-    False -> {
-      let from = case
-        resource.resource_value_get_string(resource.create_resource_value(
-          Some(rd),
-          get_res(i),
-        ))
-      {
-        Some(s) -> s.text
-        None -> ""
-      }
-      let to = case
-        resource.resource_value_get_string(resource.create_resource_value(
-          Some(rd),
-          get_res(i + 1),
-        ))
-      {
-        Some(s) -> s.text
-        None -> ""
-      }
-      read_alias_map_loop(
-        rd,
-        get_res,
-        i + 2,
-        length,
-        dict.insert(acc, from, to),
-      )
-    }
+  case values {
+    [from, to, ..rest] -> pairs_to_dict_loop(rest, dict.insert(acc, from, to))
+    _ -> acc
   }
 }
 
 fn build_likely_subtags_state(
-  bundle: Bundle,
-  chain: List(LocaleChainEntry),
+  data: resource.LikelySubtagsData,
   m49_array: Dict(Int, String),
   lsrs: List(LSR),
   language_aliases: Dict(String, String),
@@ -931,7 +716,7 @@ fn build_likely_subtags_state(
             True -> Error("likelySubtags trie: bad default value")
             False -> {
               let default_lsr_index = bytestrie.get_value(trie)
-              let match_data = load_match_data(bundle, chain, m49_array)
+              let match_data = load_match_data(data, m49_array)
               Ok(LikelySubtagsState(
                 lsrs: lsrs
                   |> list.index_map(fn(l, i) { #(i, l) })

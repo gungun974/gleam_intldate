@@ -2,8 +2,7 @@ import gleam/dict.{type Dict}
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import intldate/internal/icu/icudata/cache
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
 import intldate/internal/icu/locale/uloc
 
 const maxextlang = 3
@@ -372,24 +371,10 @@ fn to_title(s: String) -> String {
 }
 
 fn find_in_pairs(
-  table: String,
   pairs: List(#(String, String)),
   key: String,
 ) -> Option(String) {
-  let entries = case cache.get(table) {
-    Ok(cached) -> cached
-    Error(_) ->
-      cache.put(
-        table,
-        list.fold(pairs, dict.new(), fn(acc, pair) {
-          case dict.has_key(acc, pair.0) {
-            True -> acc
-            False -> dict.insert(acc, pair.0, pair.1)
-          }
-        }),
-      )
-  }
-  case dict.get(entries, key) {
+  case list.key_find(pairs, key) {
     Ok(value) -> Some(value)
     Error(_) -> None
   }
@@ -544,7 +529,17 @@ fn parse_subtags(
   state: ParseState,
 ) -> ParseState {
   case subtags {
-    [] -> state
+    [] ->
+      case state.current_extension {
+        None -> state
+        Some(_) -> {
+          let #(finalized, ok) = finalize_extension(state)
+          case ok {
+            True -> finalized
+            False -> state
+          }
+        }
+      }
     [subtag, ..rest] ->
       case subtag == "" {
         True -> state
@@ -896,10 +891,7 @@ fn append_language_to_locale_id(
   case language != "" && language != lang_und {
     True ->
       current
-      <> option.unwrap(
-        find_in_pairs("uloc_tag_deprecatedlangs", deprecatedlangs, language),
-        language,
-      )
+      <> option.unwrap(find_in_pairs(deprecatedlangs, language), language)
     False -> current
   }
 }
@@ -923,10 +915,7 @@ fn append_region_to_locale_id(
     region ->
       current
       <> locale_sep
-      <> option.unwrap(
-        find_in_pairs("uloc_tag_deprecatedregions", deprecatedregions, region),
-        region,
-      )
+      <> option.unwrap(find_in_pairs(deprecatedregions, region), region)
   }
 }
 

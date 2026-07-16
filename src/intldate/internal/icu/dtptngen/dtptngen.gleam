@@ -3,12 +3,12 @@ import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import intldate/internal/icu/icudata/cache
-import intldate/internal/icu/icudata/resbund.{type Bundle, type LocaleChainEntry}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/icudata/resource
-import intldate/internal/icu/icudata/uresimp
 import intldate/internal/icu/locale/loclikelysubtags
 import intldate/internal/icu/locale/uloc
+import intldate/internal/icu/numfmt/decimfmt
 import intldate/internal/icu/numsys/numsys
 
 pub const udatpg_era_field = 0
@@ -88,10 +88,6 @@ const dt_numeric = 256
 const dt_delta = 16
 
 const none_type = 0
-
-const extra_field = 65_536
-
-const missing_field = 4096
 
 fn udatpg_fractional_mask() -> Int {
   16_384
@@ -514,19 +510,13 @@ fn get_canonical_index_loop(
 }
 
 fn dt_type_at(index: Int) -> Option(DtType) {
-  let by_index = case cache.get("dt_types") {
-    Ok(cached) -> cached
-    Error(_) ->
-      cache.put(
-        "dt_types",
-        dt_types()
-          |> list.index_map(fn(row, i) { #(i, row) })
-          |> dict.from_list,
-      )
-  }
-  case dict.get(by_index, index) {
-    Ok(row) -> Some(row)
-    Error(_) -> None
+  case index < 0 {
+    True -> None
+    False ->
+      case list.drop(dt_types(), index) |> list.first {
+        Ok(row) -> Some(row)
+        Error(_) -> None
+      }
   }
 }
 
@@ -749,28 +739,60 @@ fn skeleton_fields_equals_loop(
 pub type PtnSkeleton {
   PtnSkeleton(
     type_: Dict(Int, Int),
-    type_list: List(Int),
+    type_vector: FieldTypes,
     original: SkeletonFields,
     base_original: SkeletonFields,
     added_default_day_period: Bool,
   )
 }
 
-fn type_list_of(types: Dict(Int, Int)) -> List(Int) {
-  type_list_loop(types, 0)
+pub type FieldTypes {
+  FieldTypes(
+    era: Int,
+    year: Int,
+    quarter: Int,
+    month: Int,
+    week_of_year: Int,
+    week_of_month: Int,
+    weekday: Int,
+    day_of_year: Int,
+    day_of_week_in_month: Int,
+    day: Int,
+    dayperiod: Int,
+    hour: Int,
+    minute: Int,
+    second: Int,
+    fractional_second: Int,
+    zone: Int,
+  )
 }
 
-fn type_list_loop(types: Dict(Int, Int), i: Int) -> List(Int) {
-  case i >= udatpg_field_count {
-    True -> []
-    False -> [dict_int_get(types, i, 0), ..type_list_loop(types, i + 1)]
-  }
+fn field_types_of(types: Dict(Int, Int)) -> FieldTypes {
+  FieldTypes(
+    era: dict_int_get(types, 0, 0),
+    year: dict_int_get(types, 1, 0),
+    quarter: dict_int_get(types, 2, 0),
+    month: dict_int_get(types, 3, 0),
+    week_of_year: dict_int_get(types, 4, 0),
+    week_of_month: dict_int_get(types, 5, 0),
+    weekday: dict_int_get(types, 6, 0),
+    day_of_year: dict_int_get(types, 7, 0),
+    day_of_week_in_month: dict_int_get(types, 8, 0),
+    day: dict_int_get(types, 9, 0),
+    dayperiod: dict_int_get(types, 10, 0),
+    hour: dict_int_get(types, 11, 0),
+    minute: dict_int_get(types, 12, 0),
+    second: dict_int_get(types, 13, 0),
+    fractional_second: dict_int_get(types, 14, 0),
+    zone: dict_int_get(types, 15, 0),
+  )
 }
 
 pub fn create_ptn_skeleton() -> PtnSkeleton {
+  let types = field_int_dict(0)
   PtnSkeleton(
-    type_: field_int_dict(0),
-    type_list: type_list_of(field_int_dict(0)),
+    type_: types,
+    type_vector: field_types_of(types),
     original: create_skeleton_fields(),
     base_original: create_skeleton_fields(),
     added_default_day_period: False,
@@ -780,7 +802,7 @@ pub fn create_ptn_skeleton() -> PtnSkeleton {
 pub fn ptn_skeleton_copy_from(other: PtnSkeleton) -> PtnSkeleton {
   PtnSkeleton(
     type_: other.type_,
-    type_list: other.type_list,
+    type_vector: other.type_vector,
     original: other.original,
     base_original: other.base_original,
     added_default_day_period: other.added_default_day_period,
@@ -914,79 +936,36 @@ pub fn date_time_matcher_get_distance(
   other: DateTimeMatcher,
   include_mask: Int,
 ) -> #(Int, DistanceInfo) {
-  date_time_matcher_get_distance_loop(
-    dtm.skeleton.type_list,
-    other.skeleton.type_list,
+  field_types_distance(
+    dtm.skeleton.type_vector,
+    other.skeleton.type_vector,
     include_mask,
-    0,
-    0,
-    distance_info_clear(),
+    0x7fffffff,
   )
 }
 
-fn date_time_matcher_get_distance_loop(
-  mine: List(Int),
-  theirs: List(Int),
+fn date_time_matcher_get_distance_bounded(
+  dtm: DateTimeMatcher,
+  other: DateTimeMatcher,
   include_mask: Int,
-  i: Int,
-  result: Int,
-  di: DistanceInfo,
+  limit: Int,
 ) -> #(Int, DistanceInfo) {
-  case mine, theirs {
-    [my_raw, ..my_rest], [other_type, ..other_rest] -> {
-      let my_type = case
-        int.bitwise_and(include_mask, int.bitwise_shift_left(1, i)) == 0
-      {
-        True -> 0
-        False -> my_raw
-      }
-      case my_type == other_type {
-        True ->
-          date_time_matcher_get_distance_loop(
-            my_rest,
-            other_rest,
-            include_mask,
-            i + 1,
-            result,
-            di,
-          )
-        False ->
-          case my_type == 0 {
-            True ->
-              date_time_matcher_get_distance_loop(
-                my_rest,
-                other_rest,
-                include_mask,
-                i + 1,
-                result + extra_field,
-                distance_info_add_extra(di, i),
-              )
-            False ->
-              case other_type == 0 {
-                True ->
-                  date_time_matcher_get_distance_loop(
-                    my_rest,
-                    other_rest,
-                    include_mask,
-                    i + 1,
-                    result + missing_field,
-                    distance_info_add_missing(di, i),
-                  )
-                False ->
-                  date_time_matcher_get_distance_loop(
-                    my_rest,
-                    other_rest,
-                    include_mask,
-                    i + 1,
-                    result + int.absolute_value(my_type - other_type),
-                    di,
-                  )
-              }
-          }
-      }
-    }
-    _, _ -> #(result, di)
-  }
+  field_types_distance(
+    dtm.skeleton.type_vector,
+    other.skeleton.type_vector,
+    include_mask,
+    limit,
+  )
+}
+
+@external(erlang, "intldate_dtpg_ffi", "distance")
+fn field_types_distance(
+  _mine: FieldTypes,
+  _theirs: FieldTypes,
+  _include_mask: Int,
+  _limit: Int,
+) -> #(Int, DistanceInfo) {
+  panic as "unsupported Target"
 }
 
 pub type PtnElem {
@@ -999,11 +978,11 @@ pub type PtnElem {
 }
 
 pub type PatternMap {
-  PatternMap(boot: Dict(Int, List(PtnElem)))
+  PatternMap(boot: Dict(Int, List(PtnElem)), all_elems: List(PtnElem))
 }
 
 pub fn create_pattern_map() -> PatternMap {
-  PatternMap(boot: pattern_map_boot())
+  PatternMap(boot: pattern_map_boot(), all_elems: [])
 }
 
 fn pattern_map_boot() -> Dict(Int, List(PtnElem)) {
@@ -1080,18 +1059,17 @@ pub fn pattern_map_add(
     [] -> {
       let new_elem =
         PtnElem(base_pattern, skeleton, value, skeleton_was_specified)
-      PatternMap(boot: dict.insert(pm.boot, idx, [new_elem]))
+      PatternMap(boot: dict.insert(pm.boot, idx, [new_elem]), all_elems: [])
     }
     _ ->
       case pattern_map_get_duplicate_elem(base_pattern, skeleton, bucket) {
         None -> {
           let new_elem =
             PtnElem(base_pattern, skeleton, value, skeleton_was_specified)
-          PatternMap(boot: dict.insert(
-            pm.boot,
-            idx,
-            list.append(bucket, [new_elem]),
-          ))
+          PatternMap(
+            boot: dict.insert(pm.boot, idx, list.append(bucket, [new_elem])),
+            all_elems: [],
+          )
         }
         Some(dup) -> {
           let replacement =
@@ -1101,11 +1079,14 @@ pub fn pattern_map_add(
               value,
               skeleton_was_specified,
             )
-          PatternMap(boot: dict.insert(
-            pm.boot,
-            idx,
-            list_replace_first(bucket, dup, replacement),
-          ))
+          PatternMap(
+            boot: dict.insert(
+              pm.boot,
+              idx,
+              list_replace_first(bucket, dup, replacement),
+            ),
+            all_elems: [],
+          )
         }
       }
   }
@@ -1199,18 +1180,14 @@ fn pattern_map_get_pattern_from_skeleton_loop(
 }
 
 pub fn pattern_map_all_elems(pm: PatternMap) -> List(PtnElem) {
-  pm.boot |> dict.values |> list.flatten
+  case pm.all_elems {
+    [] -> pm.boot |> dict.values |> list.flatten
+    elems -> elems
+  }
 }
 
-fn list_contains_string(list: List(String), value: String) -> Bool {
-  case list {
-    [] -> False
-    [head, ..rest] ->
-      case head == value {
-        True -> True
-        False -> list_contains_string(rest, value)
-      }
-  }
+fn finalize_pattern_map(pm: PatternMap) -> PatternMap {
+  PatternMap(..pm, all_elems: pm.boot |> dict.values |> list.flatten)
 }
 
 pub type DtSkeletonEnumeration {
@@ -1288,39 +1265,6 @@ fn get_date_time_format_style(req_skeleton: PtnSkeleton) -> Int {
   }
 }
 
-fn get_resource_string(
-  res_data: resource.ResourceData,
-  res: Int,
-) -> Option(String) {
-  let t = uresimp.res_get_type(res)
-  case t == uresimp.ResString || t == uresimp.ResStringV2 {
-    True -> resource_string_text(res_data, res)
-    False ->
-      case uresimp.ures_is_array(t) {
-        True -> {
-          let arr = resource.get_array(res_data, res)
-          case arr.get_res, arr.length > 0 {
-            Some(get_res), True -> resource_string_text(res_data, get_res(0))
-            _, _ -> None
-          }
-        }
-        False -> None
-      }
-  }
-}
-
-fn resource_string_text(rd: resource.ResourceData, res: Int) -> Option(String) {
-  case
-    resource.resource_value_get_string(resource.create_resource_value(
-      Some(rd),
-      res,
-    ))
-  {
-    Some(s) -> Some(s.text)
-    None -> None
-  }
-}
-
 fn find_first_dt_type_for_field(field: Int) -> Option(DtType) {
   find_first_dt_type_for_field_loop(dt_types(), field)
 }
@@ -1389,7 +1333,7 @@ fn compute_skeleton_tokens_loop(
                       original:,
                       base_original:,
                       type_:,
-                      type_list: type_list_of(type_),
+                      type_vector: field_types_of(type_),
                     ),
                   )
                 }
@@ -1485,7 +1429,7 @@ fn fixup_hour_day_period(skeleton: PtnSkeleton) -> PtnSkeleton {
                     original:,
                     base_original:,
                     type_:,
-                    type_list: type_list_of(type_),
+                    type_vector: field_types_of(type_),
                     added_default_day_period: True,
                   )
                 }
@@ -1550,7 +1494,7 @@ pub type DateTimePatternGenerator {
     bundle: Option(Bundle),
     locale_id: String,
     base_name: String,
-    chain: Option(List(LocaleChainEntry)),
+    chain: Option(List(String)),
   )
 }
 
@@ -1774,36 +1718,207 @@ fn dtpg_get_calendar_type_to_use(dtpg: DateTimePatternGenerator) -> String {
   }
 }
 
+fn calendar_data_for(
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  locale: String,
+  cal_type: String,
+) -> Option(resource.DateIntervalCalendarData) {
+  case dict.get(locales, locale) {
+    Error(_) -> None
+    Ok(by_cal) -> option.from_result(dict.get(by_cal, cal_type))
+  }
+}
+
+fn find_calendar_field(
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  full_chain: List(String),
+  chain: List(String),
+  cal_type: String,
+  select: fn(resource.DateIntervalCalendarData) ->
+    Option(resource.CalendarField(a)),
+  depth: Int,
+) -> Option(a) {
+  case depth >= 8 {
+    True -> None
+    False ->
+      case chain {
+        [] -> None
+        [locale, ..rest] ->
+          case calendar_data_for(locales, locale, cal_type) {
+            None ->
+              find_calendar_field(
+                locales,
+                full_chain,
+                rest,
+                cal_type,
+                select,
+                depth,
+              )
+            Some(data) ->
+              case select(data) {
+                None ->
+                  find_calendar_field(
+                    locales,
+                    full_chain,
+                    rest,
+                    cal_type,
+                    select,
+                    depth,
+                  )
+                Some(resource.CalendarValue(value)) -> Some(value)
+                Some(resource.CalendarAliasTo(target)) ->
+                  find_calendar_field(
+                    locales,
+                    full_chain,
+                    full_chain,
+                    target,
+                    select,
+                    depth + 1,
+                  )
+              }
+          }
+      }
+  }
+}
+
+fn merge_missing_map(
+  acc: Dict(String, a),
+  found: Dict(String, a),
+) -> Dict(String, a) {
+  dict.fold(found, acc, fn(acc, key, value) {
+    case dict.has_key(acc, key) {
+      True -> acc
+      False -> dict.insert(acc, key, value)
+    }
+  })
+}
+
+fn merge_calendar_field(
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  chain: List(String),
+  cal_type: String,
+  select: fn(resource.DateIntervalCalendarData) ->
+    Option(resource.CalendarField(Dict(String, a))),
+) -> Dict(String, a) {
+  merge_calendar_field_calendars(
+    locales,
+    chain,
+    cal_type,
+    select,
+    dict.new(),
+    [],
+  )
+}
+
+fn merge_calendar_field_calendars(
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  chain: List(String),
+  cal_type: String,
+  select: fn(resource.DateIntervalCalendarData) ->
+    Option(resource.CalendarField(Dict(String, a))),
+  acc: Dict(String, a),
+  loaded: List(String),
+) -> Dict(String, a) {
+  case list.contains(loaded, cal_type) {
+    True -> acc
+    False -> {
+      let #(acc, next_cal) =
+        merge_calendar_field_chain(locales, chain, cal_type, select, acc, None)
+      case next_cal {
+        None -> acc
+        Some(target) ->
+          merge_calendar_field_calendars(locales, chain, target, select, acc, [
+            cal_type,
+            ..loaded
+          ])
+      }
+    }
+  }
+}
+
+fn merge_calendar_field_chain(
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  chain: List(String),
+  cal_type: String,
+  select: fn(resource.DateIntervalCalendarData) ->
+    Option(resource.CalendarField(Dict(String, a))),
+  acc: Dict(String, a),
+  next_cal: Option(String),
+) -> #(Dict(String, a), Option(String)) {
+  case chain {
+    [] -> #(acc, next_cal)
+    [locale, ..rest] ->
+      case calendar_data_for(locales, locale, cal_type) {
+        None ->
+          merge_calendar_field_chain(
+            locales,
+            rest,
+            cal_type,
+            select,
+            acc,
+            next_cal,
+          )
+        Some(data) ->
+          case select(data) {
+            None ->
+              merge_calendar_field_chain(
+                locales,
+                rest,
+                cal_type,
+                select,
+                acc,
+                next_cal,
+              )
+            Some(resource.CalendarValue(found)) ->
+              merge_calendar_field_chain(
+                locales,
+                rest,
+                cal_type,
+                select,
+                merge_missing_map(acc, found),
+                next_cal,
+              )
+            Some(resource.CalendarAliasTo(target)) ->
+              merge_calendar_field_chain(
+                locales,
+                rest,
+                cal_type,
+                select,
+                acc,
+                Some(target),
+              )
+          }
+      }
+  }
+}
+
 fn dtpg_add_icu_patterns(
   dtpg: DateTimePatternGenerator,
 ) -> DateTimePatternGenerator {
   case dtpg.bundle, dtpg.chain {
     Some(bundle), Some(chain) -> {
       let cal_type = dtpg_get_calendar_type_to_use(dtpg)
+      let locales = bundle.date_interval_data_by_locale.locales
       case
-        resbund.get_by_path(
-          bundle,
+        find_calendar_field(
+          locales,
           chain,
-          "calendar/" <> cal_type <> "/DateTimePatterns",
+          chain,
+          cal_type,
+          fn(data) { data.date_time_patterns },
           0,
         )
       {
         None -> dtpg
-        Some(found) -> {
-          let arr = resource.get_array(found.res_data, found.res)
-          let count = int_min(8, arr.length)
-          dtpg_add_icu_patterns_loop(dtpg, found.res_data, arr, 0, count)
-        }
+        Some(patterns) ->
+          patterns
+          |> list.take(8)
+          |> list.fold(dtpg, fn(dtpg, pattern) {
+            dtpg_add_pattern_with_optional_skeleton(dtpg, pattern, None, False).dtpg
+          })
       }
     }
     _, _ -> dtpg
-  }
-}
-
-fn int_min(a: Int, b: Int) -> Int {
-  case a < b {
-    True -> a
-    False -> b
   }
 }
 
@@ -1876,56 +1991,37 @@ fn dtpg_find_field_index(
   }
 }
 
-type AppendItemsAcc {
-  AppendItemsAcc(dtpg: DateTimePatternGenerator, seen: List(Int))
-}
-
 fn dtpg_add_cldr_data_append_items(
   dtpg: DateTimePatternGenerator,
   cal_type: String,
 ) -> DateTimePatternGenerator {
   case dtpg.bundle, dtpg.chain {
     Some(bundle), Some(chain) -> {
-      let acc =
-        resbund.get_all_children_with_fallback(
-          bundle,
-          chain,
-          "calendar/" <> cal_type <> "/appendItems",
-          AppendItemsAcc(dtpg, []),
-          fn(acc, key, res_data, res) {
-            let field = dtpg_get_append_format_number(key)
-            case
-              field == udatpg_field_count || list_contains_int(acc.seen, field)
-            {
-              True -> acc
-              False ->
-                case get_resource_string(res_data, res) {
-                  None -> acc
-                  Some("") -> acc
-                  Some(value) ->
-                    case
-                      dict_string_get(acc.dtpg.append_item_formats, field, "")
-                      == ""
-                    {
-                      True ->
-                        AppendItemsAcc(
-                          DateTimePatternGenerator(
-                            ..acc.dtpg,
-                            append_item_formats: dict.insert(
-                              acc.dtpg.append_item_formats,
-                              field,
-                              value,
-                            ),
-                          ),
-                          [field, ..acc.seen],
-                        )
-                      False -> acc
-                    }
-                }
-            }
-          },
-        )
-      let dtpg = acc.dtpg
+      let locales = bundle.date_interval_data_by_locale.locales
+      let items =
+        merge_calendar_field(locales, chain, cal_type, fn(data) {
+          data.append_items
+        })
+      let dtpg =
+        dict.fold(items, dtpg, fn(dtpg, key, value) {
+          let field = dtpg_get_append_format_number(key)
+          case
+            field == udatpg_field_count
+            || value == ""
+            || dict_string_get(dtpg.append_item_formats, field, "") != ""
+          {
+            True -> dtpg
+            False ->
+              DateTimePatternGenerator(
+                ..dtpg,
+                append_item_formats: dict.insert(
+                  dtpg.append_item_formats,
+                  field,
+                  value,
+                ),
+              )
+          }
+        })
       let append_item_formats =
         fill_append_item_formats(dtpg.append_item_formats, 0)
       DateTimePatternGenerator(..dtpg, append_item_formats:)
@@ -1951,110 +2047,54 @@ fn fill_append_item_formats(
   }
 }
 
-fn list_contains_int(list: List(Int), value: Int) -> Bool {
-  case list {
-    [] -> False
-    [head, ..rest] ->
-      case head == value {
-        True -> True
-        False -> list_contains_int(rest, value)
-      }
-  }
-}
-
-type FieldNamesAcc {
-  FieldNamesAcc(dtpg: DateTimePatternGenerator, seen: List(String))
-}
-
-fn table_dn_string(
-  res_data: resource.ResourceData,
-  res: Int,
-) -> Option(String) {
-  case uresimp.ures_is_table(uresimp.res_get_type(res)) {
-    False -> None
-    True -> {
-      let table = resource.get_table(res_data, res)
-      find_dn_in_table(res_data, table, 0)
-    }
-  }
-}
-
-fn find_dn_in_table(
-  res_data: resource.ResourceData,
-  table: resource.ResourceTableView,
-  i: Int,
-) -> Option(String) {
-  case i >= table.length {
-    True -> None
-    False ->
-      case table.get_key, table.get_res {
-        Some(get_key), Some(get_res) ->
-          case get_key(i) == "dn" {
-            True -> get_resource_string(res_data, get_res(i))
-            False -> find_dn_in_table(res_data, table, i + 1)
-          }
-        _, _ -> None
-      }
-  }
-}
-
 fn dtpg_add_cldr_data_field_names(
   dtpg: DateTimePatternGenerator,
 ) -> DateTimePatternGenerator {
   case dtpg.bundle, dtpg.chain {
     Some(bundle), Some(chain) -> {
-      let acc =
-        resbund.get_all_children_with_fallback(
-          bundle,
-          chain,
-          "fields",
-          FieldNamesAcc(dtpg, []),
-          fn(acc, key, res_data, res) {
-            let fw = dtpg_get_field_and_width_indices(key)
-            case fw.field == udatpg_field_count {
-              True -> acc
-              False -> {
-                let seen_key =
-                  int.to_string(fw.field) <> ":" <> int.to_string(fw.width)
-                case list_contains_string(acc.seen, seen_key) {
-                  True -> acc
+      let locales = bundle.relative_fields_by_locale.locales
+      let dtpg =
+        list.fold(chain, dtpg, fn(dtpg, locale) {
+          case dict.get(locales, locale) {
+            Error(_) -> dtpg
+            Ok(fields) ->
+              dict.fold(fields, dtpg, fn(dtpg, key, value) {
+                let fw = dtpg_get_field_and_width_indices(key)
+                case fw.field == udatpg_field_count {
+                  True -> dtpg
                   False ->
-                    case table_dn_string(res_data, res) {
-                      None -> acc
-                      Some("") -> acc
-                      Some(dn) -> {
-                        let row =
-                          field_display_row_get(
-                            acc.dtpg.field_display_names,
-                            fw.field,
-                          )
-                        case dict_string_get(row, fw.width, "") == "" {
-                          True -> {
-                            let field_display_names =
-                              field_display_name_set(
-                                acc.dtpg.field_display_names,
+                    case value {
+                      resource.RelativeFieldAliasTo(_) -> dtpg
+                      resource.RelativeFieldValue(data) ->
+                        case data.display_name {
+                          None | Some("") -> dtpg
+                          Some(dn) -> {
+                            let row =
+                              field_display_row_get(
+                                dtpg.field_display_names,
                                 fw.field,
-                                fw.width,
-                                dn,
                               )
-                            FieldNamesAcc(
-                              DateTimePatternGenerator(
-                                ..acc.dtpg,
-                                field_display_names:,
-                              ),
-                              [seen_key, ..acc.seen],
-                            )
+                            case dict_string_get(row, fw.width, "") == "" {
+                              False -> dtpg
+                              True ->
+                                DateTimePatternGenerator(
+                                  ..dtpg,
+                                  field_display_names: field_display_name_set(
+                                    dtpg.field_display_names,
+                                    fw.field,
+                                    fw.width,
+                                    dn,
+                                  ),
+                                )
+                            }
                           }
-                          False -> acc
                         }
-                      }
                     }
                 }
-              }
-            }
-          },
-        )
-      fill_field_display_name_defaults(acc.dtpg)
+              })
+          }
+        })
+      fill_field_display_name_defaults(dtpg)
     }
     _, _ -> dtpg
   }
@@ -2102,49 +2142,38 @@ fn fill_width_defaults_loop(
   }
 }
 
-type AvailableFormatsAcc {
-  AvailableFormatsAcc(dtpg: DateTimePatternGenerator)
-}
-
 fn dtpg_add_cldr_data_available_formats(
   dtpg: DateTimePatternGenerator,
   cal_type: String,
 ) -> DateTimePatternGenerator {
   case dtpg.bundle, dtpg.chain {
     Some(bundle), Some(chain) -> {
-      let acc =
-        resbund.get_all_children_with_fallback(
-          bundle,
-          chain,
-          "calendar/" <> cal_type <> "/availableFormats",
-          AvailableFormatsAcc(dtpg),
-          fn(acc, key, res_data, res) {
-            case list_contains_string(acc.dtpg.available_format_keys, key) {
-              True -> acc
-              False -> {
-                let dtpg =
-                  DateTimePatternGenerator(..acc.dtpg, available_format_keys: [
-                    key,
-                    ..acc.dtpg.available_format_keys
-                  ])
-                case get_resource_string(res_data, res) {
-                  None -> AvailableFormatsAcc(dtpg)
-                  Some(value) -> {
-                    let r =
-                      dtpg_add_pattern_with_optional_skeleton(
-                        dtpg,
-                        value,
-                        Some(key),
-                        True,
-                      )
-                    AvailableFormatsAcc(r.dtpg)
-                  }
-                }
-              }
-            }
-          },
-        )
-      acc.dtpg
+      let locales = bundle.date_interval_data_by_locale.locales
+      let formats =
+        merge_calendar_field(locales, chain, cal_type, fn(data) {
+          data.available_formats
+        })
+      formats
+      |> dict.to_list
+      |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
+      |> list.fold(dtpg, fn(dtpg, entry) {
+        let #(key, value) = entry
+        let dtpg =
+          DateTimePatternGenerator(..dtpg, available_format_keys: [
+            key,
+            ..dtpg.available_format_keys
+          ])
+        case value {
+          resource.AvailableFormatUnavailable -> dtpg
+          resource.AvailableFormatPattern(pattern) ->
+            dtpg_add_pattern_with_optional_skeleton(
+              dtpg,
+              pattern,
+              Some(key),
+              True,
+            ).dtpg
+        }
+      })
     }
     _, _ -> dtpg
   }
@@ -2165,67 +2194,20 @@ fn dtpg_set_date_time_from_calendar(
   case dtpg.bundle, dtpg.chain {
     Some(bundle), Some(chain) -> {
       let cal_type = dtpg_get_calendar_type_to_use(dtpg)
-      let c_type_is_gregorian = cal_type == "gregorian"
-
-      let at_time = case c_type_is_gregorian {
-        True -> None
-        False ->
-          resbund.get_by_path(
-            bundle,
-            chain,
-            "calendar/" <> cal_type <> "/DateTimePatterns%atTime",
-            0,
-          )
-      }
-      let at_time = case at_time {
-        Some(_) -> at_time
-        None ->
-          resbund.get_by_path(
-            bundle,
-            chain,
-            "calendar/gregorian/DateTimePatterns%atTime",
-            0,
-          )
-      }
-      let arr0 = case at_time {
-        None -> None
-        Some(found) ->
-          Some(#(found, resource.get_array(found.res_data, found.res)))
-      }
-      case arr0 {
-        Some(#(found, arr)) if arr.length >= 4 ->
-          apply_date_time_patterns(dtpg, found.res_data, arr, 0)
-        _ -> {
-          let full = case c_type_is_gregorian {
-            True -> None
+      let locales = bundle.date_interval_data_by_locale.locales
+      let at_time =
+        find_date_time_patterns(locales, chain, cal_type, fn(data) {
+          data.date_time_patterns_at_time
+        })
+      case at_time {
+        Some(patterns) ->
+          case list.length(patterns) >= 4 {
+            True -> apply_date_time_patterns(dtpg, patterns, 0)
             False ->
-              resbund.get_by_path(
-                bundle,
-                chain,
-                "calendar/" <> cal_type <> "/DateTimePatterns",
-                0,
-              )
+              set_date_time_from_full_patterns(dtpg, locales, chain, cal_type)
           }
-          let full = case full {
-            Some(_) -> full
-            None ->
-              resbund.get_by_path(
-                bundle,
-                chain,
-                "calendar/gregorian/DateTimePatterns",
-                0,
-              )
-          }
-          case full {
-            None -> dtpg
-            Some(found) -> {
-              let arr = resource.get_array(found.res_data, found.res)
-              case arr.length <= 9 + 3 {
-                True -> dtpg
-                False -> apply_date_time_patterns(dtpg, found.res_data, arr, 9)
-              }
-            }
-          }
+        _ -> {
+          set_date_time_from_full_patterns(dtpg, locales, chain, cal_type)
         }
       }
     }
@@ -2233,18 +2215,52 @@ fn dtpg_set_date_time_from_calendar(
   }
 }
 
+fn set_date_time_from_full_patterns(
+  dtpg: DateTimePatternGenerator,
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  chain: List(String),
+  cal_type: String,
+) -> DateTimePatternGenerator {
+  let full =
+    find_date_time_patterns(locales, chain, cal_type, fn(data) {
+      data.date_time_patterns
+    })
+  case full {
+    None -> dtpg
+    Some(patterns) ->
+      case list.length(patterns) > 12 {
+        True -> apply_date_time_patterns(dtpg, patterns, 9)
+        False -> dtpg
+      }
+  }
+}
+
+fn find_date_time_patterns(
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  chain: List(String),
+  cal_type: String,
+  select: fn(resource.DateIntervalCalendarData) ->
+    Option(resource.CalendarField(List(String))),
+) -> Option(List(String)) {
+  let found = case cal_type == "gregorian" {
+    True -> None
+    False -> find_calendar_field(locales, chain, chain, cal_type, select, 0)
+  }
+  case found {
+    Some(_) -> found
+    None -> find_calendar_field(locales, chain, chain, "gregorian", select, 0)
+  }
+}
+
 fn apply_date_time_patterns(
   dtpg: DateTimePatternGenerator,
-  res_data: resource.ResourceData,
-  arr: resource.ResourceArrayView,
+  patterns: List(String),
   offset: Int,
 ) -> DateTimePatternGenerator {
   let date_time_format =
     apply_date_time_patterns_loop(
       dtpg.date_time_format,
-      res_data,
-      arr,
-      offset,
+      list.drop(patterns, offset),
       0,
     )
   DateTimePatternGenerator(..dtpg, date_time_format:)
@@ -2252,90 +2268,43 @@ fn apply_date_time_patterns(
 
 fn apply_date_time_patterns_loop(
   date_time_format: Dict(Int, String),
-  res_data: resource.ResourceData,
-  arr: resource.ResourceArrayView,
-  offset: Int,
+  patterns: List(String),
   style: Int,
 ) -> Dict(Int, String) {
-  case style > 3 {
-    True -> date_time_format
-    False ->
-      case arr.get_res {
-        None -> date_time_format
-        Some(get_res) -> {
-          let date_time_format = case
-            get_resource_string(res_data, get_res(offset + style))
-          {
-            None -> date_time_format
-            Some(s) -> date_time_format_set(date_time_format, style, s)
-          }
-          apply_date_time_patterns_loop(
-            date_time_format,
-            res_data,
-            arr,
-            offset,
-            style + 1,
-          )
-        }
-      }
+  case patterns, style > 3 {
+    _, True -> date_time_format
+    [], False -> date_time_format
+    [pattern, ..rest], False ->
+      apply_date_time_patterns_loop(
+        date_time_format_set(date_time_format, style, pattern),
+        rest,
+        style + 1,
+      )
   }
 }
 
 fn dtpg_set_decimal_symbols(
   dtpg: DateTimePatternGenerator,
 ) -> DateTimePatternGenerator {
-  case dtpg.bundle, dtpg.chain {
-    Some(bundle), Some(chain) -> {
+  case dtpg.bundle {
+    Some(bundle) -> {
       let ns = numsys.create_instance_for_locale(bundle, dtpg.locale_id)
       let ns_name = numsys.numbering_system_get_name(ns)
       let found = case ns_name != "latn" {
-        True ->
-          resbund.get_by_path(
-            bundle,
-            chain,
-            "NumberElements/" <> ns_name <> "/symbols/decimal",
-            0,
-          )
+        True -> decimfmt.load_decimal_separator(bundle, dtpg.locale_id, ns_name)
         False -> None
       }
       let found = case found {
         Some(_) -> found
-        None ->
-          resbund.get_by_path(
-            bundle,
-            chain,
-            "NumberElements/latn/symbols/decimal",
-            0,
-          )
+        None -> decimfmt.load_decimal_separator(bundle, dtpg.locale_id, "latn")
       }
       case found {
         None -> dtpg
-        Some(f) ->
-          case get_resource_string(f.res_data, f.res) {
-            None -> dtpg
-            Some(s) -> DateTimePatternGenerator(..dtpg, decimal: s)
-          }
+        Some(decimal) -> DateTimePatternGenerator(..dtpg, decimal:)
       }
     }
-    _, _ -> dtpg
+    None -> dtpg
   }
-}
-
-fn adapt_likely_subtags_bundle(bundle: Bundle) -> loclikelysubtags.Bundle {
-  loclikelysubtags.Bundle(
-    open_direct: fn(name) { resbund.open_direct_or_panic(bundle, name) },
-    get_by_path: fn(chain, path) {
-      let resbund_chain =
-        list.map(chain, fn(entry) {
-          resbund.LocaleChainEntry(entry.name, Some(entry.res_data))
-        })
-      case resbund.get_by_path(bundle, resbund_chain, path, 0) {
-        None -> None
-        Some(resolved) ->
-          Some(loclikelysubtags.MatchLookup(resolved.res_data, resolved.res))
-      }
-    },
-  )
 }
 
 fn maximize_language_script_region(
@@ -2344,9 +2313,7 @@ fn maximize_language_script_region(
   script: String,
   region: String,
 ) -> #(String, String) {
-  case
-    loclikelysubtags.create_likely_subtags(adapt_likely_subtags_bundle(bundle))
-  {
+  case loclikelysubtags.create_likely_subtags(bundle) {
     Error(_) -> #(language, region)
     Ok(state) -> {
       let lsr =
@@ -2380,22 +2347,13 @@ fn dtpg_get_allowed_hour_formats(
         False -> country
       }
 
-      let supp_rd = resbund.open_direct_or_panic(bundle, "supplementalData")
-      let supp_chain = [
-        resbund.LocaleChainEntry("supplementalData", Some(supp_rd)),
-      ]
-      let td = resbund.get_by_path(bundle, supp_chain, "timeData", 0)
+      let supplemental_data = bundle.supplemental_data
 
-      let entry = case td {
-        None -> None
-        Some(found) -> {
-          let table = resource.get_table(found.res_data, found.res)
-          let lang_country = language <> "_" <> country
-          case find_table_entry(table, lang_country) {
-            Some(res) -> Some(res)
-            None -> find_table_entry(table, country)
-          }
-        }
+      let time_data = case
+        dict.get(supplemental_data.time_data, language <> "_" <> country)
+      {
+        Ok(entry) -> Ok(entry)
+        _ -> dict.get(supplemental_data.time_data, country)
       }
 
       let hours_kw = uloc.get_keyword_value(Some(dtpg.locale_id), "hours")
@@ -2407,144 +2365,18 @@ fn dtpg_get_allowed_hour_formats(
         _ -> "\u{0}"
       }
 
-      case entry, td {
-        None, _ | _, None ->
+      case time_data {
+        Error(_) ->
           finish_allowed_hour_formats(dtpg, default_hour_format_char, None, [])
-        Some(entry_res), Some(found) -> {
-          let entry_table = resource.get_table(found.res_data, entry_res)
-          let #(preferred, allowed_list) =
-            read_time_data_entry(found.res_data, entry_table, 0, None, [])
+        Ok(time_data) -> {
           finish_allowed_hour_formats(
             dtpg,
             default_hour_format_char,
-            preferred,
-            allowed_list,
+            time_data.preferred,
+            time_data.allowed,
           )
         }
       }
-    }
-  }
-}
-
-fn find_table_entry(
-  table: resource.ResourceTableView,
-  key: String,
-) -> Option(Int) {
-  case table.get_key, table.get_res {
-    Some(get_key), Some(get_res) ->
-      find_table_entry_loop(get_key, get_res, key, 0, table.length)
-    _, _ -> None
-  }
-}
-
-fn find_table_entry_loop(
-  get_key: fn(Int) -> String,
-  get_res: fn(Int) -> Int,
-  key: String,
-  i: Int,
-  length: Int,
-) -> Option(Int) {
-  case i >= length {
-    True -> None
-    False ->
-      case get_key(i) == key {
-        True -> Some(get_res(i))
-        False -> find_table_entry_loop(get_key, get_res, key, i + 1, length)
-      }
-  }
-}
-
-fn read_time_data_entry(
-  res_data: resource.ResourceData,
-  table: resource.ResourceTableView,
-  i: Int,
-  preferred: Option(String),
-  allowed_list: List(String),
-) -> #(Option(String), List(String)) {
-  case i >= table.length {
-    True -> #(preferred, allowed_list)
-    False ->
-      case table.get_key, table.get_res {
-        Some(get_key), Some(get_res) -> {
-          let key = get_key(i)
-          let res = get_res(i)
-          case key {
-            "allowed" -> {
-              let t = uresimp.res_get_type(res)
-              let allowed_list = case
-                t == uresimp.ResString || t == uresimp.ResStringV2
-              {
-                True ->
-                  case resource_string_text(res_data, res) {
-                    Some(s) -> [s]
-                    None -> allowed_list
-                  }
-                False ->
-                  case uresimp.ures_is_array(t) {
-                    True ->
-                      read_string_array_all(
-                        res_data,
-                        resource.get_array(res_data, res),
-                      )
-                    False -> allowed_list
-                  }
-              }
-              read_time_data_entry(
-                res_data,
-                table,
-                i + 1,
-                preferred,
-                allowed_list,
-              )
-            }
-            "preferred" ->
-              read_time_data_entry(
-                res_data,
-                table,
-                i + 1,
-                resource_string_text(res_data, res),
-                allowed_list,
-              )
-            _ ->
-              read_time_data_entry(
-                res_data,
-                table,
-                i + 1,
-                preferred,
-                allowed_list,
-              )
-          }
-        }
-        _, _ -> #(preferred, allowed_list)
-      }
-  }
-}
-
-fn read_string_array_all(
-  res_data: resource.ResourceData,
-  arr: resource.ResourceArrayView,
-) -> List(String) {
-  case arr.get_res {
-    None -> []
-    Some(get_res) ->
-      read_string_array_all_loop(res_data, get_res, 0, arr.length)
-  }
-}
-
-fn read_string_array_all_loop(
-  res_data: resource.ResourceData,
-  get_res: fn(Int) -> Int,
-  i: Int,
-  length: Int,
-) -> List(String) {
-  case i >= length {
-    True -> []
-    False -> {
-      let text = case resource_string_text(res_data, get_res(i)) {
-        Some(s) -> s
-        None -> ""
-      }
-      [text, ..read_string_array_all_loop(res_data, get_res, i + 1, length)]
     }
   }
 }
@@ -2606,7 +2438,7 @@ pub fn dtpg_init_data(
       locale_id:,
       base_name:,
     )
-  let chain = resbund.open_locale_chain(bundle, base_name)
+  let chain = localechain.locale_chain(bundle.locale_parents, base_name)
   let dtpg = DateTimePatternGenerator(..dtpg, chain: Some(chain))
   let dtpg = dtpg_add_canonical_items(dtpg)
   let dtpg = case skip_std_patterns {
@@ -2619,28 +2451,35 @@ pub fn dtpg_init_data(
   dtpg_get_allowed_hour_formats(dtpg)
 }
 
-pub fn dtpg_detach_chain(
-  dtpg: DateTimePatternGenerator,
-) -> DateTimePatternGenerator {
-  DateTimePatternGenerator(..dtpg, chain: None)
-}
-
-pub fn dtpg_attach_chain(
-  dtpg: DateTimePatternGenerator,
-  bundle: Bundle,
-) -> DateTimePatternGenerator {
-  DateTimePatternGenerator(
-    ..dtpg,
-    bundle: Some(bundle),
-    chain: Some(resbund.open_locale_chain(bundle, dtpg.base_name)),
-  )
-}
-
 pub fn dtpg_create_instance(
   bundle: Bundle,
   locale_id: String,
 ) -> DateTimePatternGenerator {
   dtpg_init_data(create_date_time_pattern_generator(), bundle, locale_id, False)
+}
+
+pub fn dtpg_detach_source_data(
+  dtpg: DateTimePatternGenerator,
+) -> DateTimePatternGenerator {
+  // These fields are only needed while initializing the pattern generator.
+  // Removing them prevents every encoded DTPG from embedding the whole Bundle.
+  DateTimePatternGenerator(
+    ..dtpg,
+    pattern_map: PatternMap(..dtpg.pattern_map, all_elems: []),
+    bundle: None,
+    locale_id: "",
+    base_name: "",
+    chain: None,
+  )
+}
+
+pub fn dtpg_prepare_for_runtime(
+  dtpg: DateTimePatternGenerator,
+) -> DateTimePatternGenerator {
+  DateTimePatternGenerator(
+    ..dtpg,
+    pattern_map: finalize_pattern_map(dtpg.pattern_map),
+  )
 }
 
 pub type MapSkeletonResult {
@@ -3388,7 +3227,12 @@ fn dtpg_get_best_raw_loop(
           )
         False -> {
           let #(distance, distance_info) =
-            date_time_matcher_get_distance(source, trial, include_mask)
+            date_time_matcher_get_distance_bounded(
+              source,
+              trial,
+              include_mask,
+              best_distance,
+            )
           case
             distance < best_distance
             || {
@@ -3409,17 +3253,15 @@ fn dtpg_get_best_raw_loop(
                 result_missing_fields,
               )
             True -> {
-              let r =
-                pattern_map_get_pattern_from_skeleton(
-                  dtpg.pattern_map,
-                  date_time_matcher_get_skeleton_ptr(trial),
-                  True,
-                )
+              let specified_skeleton = case elem.skeleton_was_specified {
+                True -> Some(elem.skeleton)
+                False -> None
+              }
               case distance == 0 {
                 True ->
                   GetBestRawResult(
-                    r.pattern,
-                    r.specified_skeleton,
+                    Some(elem.pattern),
+                    specified_skeleton,
                     distance_info_set_to(distance_info),
                   )
                 False ->
@@ -3430,8 +3272,8 @@ fn dtpg_get_best_raw_loop(
                     rest,
                     distance,
                     distance_info.missing_field_mask,
-                    r.pattern,
-                    r.specified_skeleton,
+                    Some(elem.pattern),
+                    specified_skeleton,
                     distance_info_set_to(distance_info),
                   )
               }
@@ -3440,36 +3282,5 @@ fn dtpg_get_best_raw_loop(
         }
       }
     }
-  }
-}
-
-fn dtpg_add_icu_patterns_loop(
-  dtpg: DateTimePatternGenerator,
-  res_data: resource.ResourceData,
-  arr: resource.ResourceArrayView,
-  i: Int,
-  count: Int,
-) -> DateTimePatternGenerator {
-  case i >= count {
-    True -> dtpg
-    False ->
-      case arr.get_res {
-        None -> dtpg
-        Some(get_res) ->
-          case get_resource_string(res_data, get_res(i)) {
-            None ->
-              dtpg_add_icu_patterns_loop(dtpg, res_data, arr, i + 1, count)
-            Some(pattern) -> {
-              let r =
-                dtpg_add_pattern_with_optional_skeleton(
-                  dtpg,
-                  pattern,
-                  None,
-                  False,
-                )
-              dtpg_add_icu_patterns_loop(r.dtpg, res_data, arr, i + 1, count)
-            }
-          }
-      }
   }
 }

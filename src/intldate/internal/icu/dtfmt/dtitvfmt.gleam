@@ -9,10 +9,10 @@ import intldate/internal/icu/calendar/timezone
 import intldate/internal/icu/dtfmt/dtitvinf.{type DateIntervalInfo}
 import intldate/internal/icu/dtfmt/smpdtfmt
 import intldate/internal/icu/dtptngen/udatpg
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/icudata/resource
 import intldate/internal/icu/locale/uloc
-import intldate/internal/icu/locale/zonemeta
 
 pub type DateIntervalSide {
   DateIntervalSide(
@@ -112,10 +112,8 @@ pub type FormattedDateIntervalResultWrapper {
   FormattedDateIntervalResultWrapper(value: Option(DateIntervalFormatResult))
 }
 
-fn zonemeta_bundle(bundle: Bundle) -> zonemeta.Bundle {
-  zonemeta.Bundle(data_path: bundle.data_path, open_direct: fn(name) {
-    resbund.open_direct_or_panic(bundle, name)
-  })
+fn zonemeta_bundle(bundle: Bundle) -> Bundle {
+  bundle
 }
 
 fn char_code(c: String) -> Int {
@@ -1907,15 +1905,61 @@ pub fn set_date_time_combined_pattern(
   }
 }
 
-fn resource_string_text(rd: resource.ResourceData, res: Int) -> Option(String) {
-  case
-    resource.resource_value_get_string(resource.create_resource_value(
-      Some(rd),
-      res,
-    ))
-  {
-    Some(s) -> Some(s.text)
-    None -> None
+fn find_date_time_combining_pattern(
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  full_chain: List(String),
+  chain: List(String),
+  cal_type: String,
+  depth: Int,
+) -> Option(String) {
+  case depth >= 6 {
+    True -> None
+    False ->
+      case chain {
+        [] -> None
+        [locale, ..rest] ->
+          case dict.get(locales, locale) {
+            Error(_) ->
+              find_date_time_combining_pattern(
+                locales,
+                full_chain,
+                rest,
+                cal_type,
+                depth,
+              )
+            Ok(by_cal) ->
+              case dict.get(by_cal, cal_type) {
+                Error(_) ->
+                  find_date_time_combining_pattern(
+                    locales,
+                    full_chain,
+                    rest,
+                    cal_type,
+                    depth,
+                  )
+                Ok(data) ->
+                  case data.date_time_combining_pattern {
+                    None ->
+                      find_date_time_combining_pattern(
+                        locales,
+                        full_chain,
+                        rest,
+                        cal_type,
+                        depth,
+                      )
+                    Some(resource.CalendarValue(pattern)) -> Some(pattern)
+                    Some(resource.CalendarAliasTo(target)) ->
+                      find_date_time_combining_pattern(
+                        locales,
+                        full_chain,
+                        full_chain,
+                        target,
+                        depth + 1,
+                      )
+                  }
+              }
+          }
+      }
   }
 }
 
@@ -1931,34 +1975,17 @@ pub fn initialize_pattern(fmt: DateIntervalFormat) -> DateIntervalFormat {
     False -> fmt
     True -> {
       let chain =
-        resbund.open_locale_chain(
-          fmt.bundle,
+        localechain.locale_chain(
+          fmt.bundle.locale_parents,
           uloc.get_base_name(Some(fmt.locale_id)),
         )
+      let locales = fmt.bundle.date_interval_data_by_locale.locales
       case
-        resbund.get_by_path(
-          fmt.bundle,
-          chain,
-          "calendar/gregorian/DateTimePatterns",
-          0,
-        )
+        find_date_time_combining_pattern(locales, chain, chain, "gregorian", 0)
       {
         None -> fmt
-        Some(found) -> {
-          let arr = resource.get_array(found.res_data, found.res)
-          case arr.length > 8, arr.get_res {
-            True, Some(get_res) ->
-              case resource_string_text(found.res_data, get_res(8)) {
-                Some(text) ->
-                  DateIntervalFormat(
-                    ..fmt,
-                    date_time_combining_pattern: Some(text),
-                  )
-                None -> fmt
-              }
-            _, _ -> fmt
-          }
-        }
+        Some(text) ->
+          DateIntervalFormat(..fmt, date_time_combining_pattern: Some(text))
       }
     }
   }

@@ -1,6 +1,6 @@
 import intldate/internal/icu/calendar/chnsecal
 import intldate/internal/icu/calendar/gregocal
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
 
 const threshold_1897 = -2_302_156_800_000
 

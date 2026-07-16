@@ -88,6 +88,8 @@ pub type IntlError {
   FailedToLoadLocale(inner: String)
   /// The requested calendar could not be loaded or resolved.
   FailedToLoadCalendar(inner: String)
+  /// The bundled locale data could not be loaded or validated.
+  FailedToLoadData(inner: String)
   /// The system local time zone could not be detected.
   SystemTimeZoneUnavailable
   /// Any error not accounted for by this type.
@@ -107,6 +109,7 @@ pub fn describe_error(error: IntlError) -> String {
     FailedToLoadTimeZone(inner) -> "Failed to load time zone: " <> inner
     FailedToLoadLocale(inner) -> "Failed to load locale: " <> inner
     FailedToLoadCalendar(inner) -> "Failed to load calendar: " <> inner
+    FailedToLoadData(inner) -> "Failed to load data: " <> inner
     SystemTimeZoneUnavailable -> "System time zone unavailable"
     Unknown(inner) -> "Unknown error: " <> inner
   }
@@ -333,6 +336,10 @@ fn to_icu_config(config: DateTimeFormatConfig) -> core.Config {
     Some(_) -> calendar_name(config.calendar)
   }
   core.Config(
+    locale_matcher: case config.locale_matcher {
+      Some(LocaleMatcherLookup) -> core.LocaleMatcherLookup
+      Some(LocaleMatcherBestFit) | None -> core.LocaleMatcherBestFit
+    },
     calendar: calendar,
     weekday: option.map(config.weekday, fn(weekday_value) {
       case weekday_value {
@@ -397,6 +404,10 @@ fn to_icu_config(config: DateTimeFormatConfig) -> core.Config {
         TimeZoneNameLongGeneric -> core.TimeZoneLongGeneric
       }
     }),
+    format_matcher: case config.format_matcher {
+      Some(FormatMatcherBasic) -> core.FormatMatcherBasic
+      Some(FormatMatcherBestFit) | None -> core.FormatMatcherBestFit
+    },
     hour12: config.hour12,
   )
 }
@@ -406,6 +417,7 @@ fn map_icu_error(error: icu.IcuError) -> IntlError {
     icu.FailedToLoadTimeZone(inner) -> FailedToLoadTimeZone(inner)
     icu.FailedToLoadLocale(inner) -> FailedToLoadLocale(inner)
     icu.FailedToLoadCalendar(inner) -> FailedToLoadCalendar(inner)
+    icu.FailedToLoadData(inner) -> FailedToLoadData(inner)
     icu.SystemTimeZoneUnavailable -> SystemTimeZoneUnavailable
     icu.Unknown(inner) -> Unknown(inner)
   }
@@ -461,14 +473,22 @@ fn raw_resolved_options(
   locale: Option(String),
   config: DateTimeFormatConfig,
 ) -> Result(DateTimeResolvedOptions, IntlError) {
-  case core.resolved_options(locale, to_icu_config(config)) {
-    Ok(#(pattern, hour_cycle_keyword, numbering_system)) ->
+  case core.resolved_options(time_zone, locale, to_icu_config(config)) {
+    Ok(#(
+      pattern,
+      hour_cycle_keyword,
+      numbering_system,
+      resolved_locale,
+      resolved_calendar,
+      resolved_time_zone,
+    )) ->
       Ok(pattern_resolved_options(
         pattern,
         hour_cycle_keyword,
         numbering_system,
-        time_zone,
-        locale,
+        resolved_time_zone,
+        resolved_locale,
+        resolved_calendar,
         config,
       ))
     Error(error) -> Error(map_icu_error(error))
@@ -479,8 +499,9 @@ fn pattern_resolved_options(
   pattern: String,
   hour_cycle_keyword: String,
   numbering_system: String,
-  time_zone: Option(String),
-  locale: Option(String),
+  time_zone: String,
+  locale: String,
+  calendar: String,
   config: DateTimeFormatConfig,
 ) -> DateTimeResolvedOptions {
   // `hour_cycle_keyword` (core's adjust_pattern/desired_hour) reflects the
@@ -507,10 +528,10 @@ fn pattern_resolved_options(
   }
 
   DateTimeResolvedOptions(
-    locale: option.unwrap(locale, ""),
-    calendar: resolved_calendar_name(config.calendar),
+    locale:,
+    calendar:,
     numbering_system:,
-    time_zone: option.unwrap(time_zone, ""),
+    time_zone:,
     hour_cycle:,
     hour12:,
     weekday: pattern_value(pattern, [
@@ -596,13 +617,6 @@ fn pattern_hour_cycle(
             _ -> pattern_hour_cycle(rest, False)
           }
       }
-  }
-}
-
-fn resolved_calendar_name(calendar: Option(Calendar)) -> String {
-  case calendar {
-    None -> "gregory"
-    Some(_) -> calendar_name(calendar)
   }
 }
 

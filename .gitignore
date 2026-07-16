@@ -5,8 +5,10 @@ erl_crash.dump
 
 /src/intldate/internal/local
 /priv/icudata
-/scripts/icu/.cache
+/.cache/
+/scripts/icu/.cache/
 /scripts/icu/out
+/priv/generated/
 /test/format.json
 /test/format_range.json
 /test/relative.json

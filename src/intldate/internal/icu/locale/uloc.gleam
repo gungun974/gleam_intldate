@@ -3,9 +3,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/order
 import gleam/string
-import intldate/internal/icu/icudata/cache
-import intldate/internal/icu/icudata/resbund.{type Bundle}
-import intldate/internal/icu/icudata/resource
+import intldate/internal/icu/icudata/bundle.{type Bundle}
 import intldate/internal/icu/locale/loclikelysubtags
 import intldate/internal/icu/locale/uloc_keytype
 
@@ -986,25 +984,6 @@ fn index_dict(values: List(a)) -> Dict(Int, a) {
   |> dict.from_list
 }
 
-fn cached_pairs_dict(
-  key: String,
-  pairs: List(#(String, String)),
-) -> Dict(String, String) {
-  case cache.get(key) {
-    Ok(cached) -> cached
-    Error(_) ->
-      cache.put(
-        key,
-        list.fold(pairs, dict.new(), fn(acc, pair) {
-          case dict.has_key(acc, pair.0) {
-            True -> acc
-            False -> dict.insert(acc, pair.0, pair.1)
-          }
-        }),
-      )
-  }
-}
-
 fn dict_at(entries: Dict(Int, a), index: Int) -> Option(a) {
   case dict.get(entries, index) {
     Ok(value) -> Some(value)
@@ -1056,14 +1035,14 @@ fn take_until_single_char_token(tokens: List(String)) -> List(String) {
 }
 
 fn lang3to2_lookup(lang: String) -> String {
-  case dict.get(cached_pairs_dict("uloc_lang3to2", lang3to2), lang) {
+  case list.key_find(lang3to2, lang) {
     Ok(v) -> v
     Error(_) -> lang
   }
 }
 
 fn country3to2_lookup(region: String) -> String {
-  case dict.get(cached_pairs_dict("uloc_country3to2", country3to2), region) {
+  case list.key_find(country3to2, region) {
     Ok(v) -> v
     Error(_) -> region
   }
@@ -1226,12 +1205,7 @@ fn find_bcp47_key_for_legacy_loop(
 
 fn is_known_key_token(token: String) -> Bool {
   let lower = string.lowercase(token)
-  case
-    dict.get(
-      cached_pairs_dict("uloc_bcp47_to_legacy_key", bcp47_to_legacy_key),
-      lower,
-    )
-  {
+  case list.key_find(bcp47_to_legacy_key, lower) {
     Ok(_) -> True
     Error(_) -> list.length(code_points(lower)) == 2
   }
@@ -1329,6 +1303,44 @@ pub fn get_keyword_value(id: Option(String), legacy_key: String) -> String {
   case get_keyword_value_from_legacy_syntax(id, legacy_key) {
     "" -> get_keyword_value_from_unicode_extension(id, legacy_key)
     value -> value
+  }
+}
+
+pub fn to_language_tag(
+  bundle: Bundle,
+  locale_id: String,
+  relevant_legacy_keys: List(String),
+) -> String {
+  let base =
+    Some(locale_id)
+    |> get_base_name
+    |> string.replace("_", "-")
+  let extensions =
+    list.filter_map(relevant_legacy_keys, fn(legacy_key) {
+      let value = get_keyword_value(Some(locale_id), legacy_key)
+      case value {
+        "" -> Error(Nil)
+        _ ->
+          case
+            uloc_keytype.ulocimp_to_bcp_key(
+              bundle.loc_ext_key_map,
+              Some(legacy_key),
+            ),
+            uloc_keytype.ulocimp_to_bcp_type(
+              bundle.loc_ext_key_map,
+              Some(legacy_key),
+              value,
+            )
+          {
+            Some(bcp_key), Some(bcp_type) ->
+              Ok(bcp_key <> "-" <> string.replace(bcp_type, "_", "-"))
+            _, _ -> Error(Nil)
+          }
+      }
+    })
+  case extensions {
+    [] -> base
+    _ -> base <> "-u-" <> string.join(extensions, "-")
   }
 }
 
@@ -1550,78 +1562,6 @@ fn build_set_keyword_value(
   }
 }
 
-fn adapt_table_view(
-  table: resource.ResourceTableView,
-) -> uloc_keytype.ResourceTableView {
-  uloc_keytype.ResourceTableView(
-    length: table.length,
-    get_key: fn(i) {
-      case table.get_key {
-        Some(get_key) -> get_key(i)
-        None -> ""
-      }
-    },
-    get_res: fn(i) {
-      case table.get_res {
-        Some(get_res) -> get_res(i)
-        None -> 0
-      }
-    },
-  )
-}
-
-fn adapt_resource_data(rd: resource.ResourceData) -> uloc_keytype.ResourceData {
-  uloc_keytype.ResourceData(
-    get_table: fn(res) { adapt_table_view(resource.get_table(rd, res)) },
-    get_table_safe: fn(res) {
-      option.map(resource.get_table_safe(rd, res), adapt_table_view)
-    },
-    get_string: fn(res) {
-      let value = resource.create_resource_value(Some(rd), res)
-      uloc_keytype.ResourceStringResult(
-        text: option.map(resource.resource_value_get_string(value), fn(s) {
-          s.text
-        }),
-      )
-    },
-  )
-}
-
-fn adapt_key_type_bundle(
-  bundle: Bundle,
-  name: String,
-) -> Option(uloc_keytype.Bundle) {
-  case resbund.open_direct(bundle, name) {
-    None -> None
-    Some(rd) ->
-      Some(uloc_keytype.Bundle(
-        open_direct: fn(inner_name) {
-          case resbund.open_direct(bundle, inner_name) {
-            Some(inner_rd) -> adapt_resource_data(inner_rd)
-            None -> adapt_resource_data(rd)
-          }
-        },
-        root_res: rd.root_res,
-      ))
-  }
-}
-
-fn build_loc_ext_key_map(bundle: Bundle) -> Option(uloc_keytype.LocExtKeyMap) {
-  let key = "keytypemap\n" <> bundle.data_path
-  case cache.get(key) {
-    Ok(cached) -> cached
-    Error(_) ->
-      case adapt_key_type_bundle(bundle, "keyTypeData") {
-        None -> None
-        Some(kt_bundle) ->
-          cache.put(
-            key,
-            Some(uloc_keytype.init_from_resource_bundle(kt_bundle)),
-          )
-      }
-  }
-}
-
 pub fn to_legacy_type(
   bundle: Option(Bundle),
   keyword: String,
@@ -1633,16 +1573,12 @@ pub fn to_legacy_type(
         True -> Some(value)
         False -> None
       }
-    Some(b) ->
-      case build_loc_ext_key_map(b) {
-        None -> None
-        Some(key_map) ->
-          uloc_keytype.ulocimp_to_legacy_type_with_fallback(
-            key_map,
-            keyword,
-            value,
-          )
-      }
+    Some(bundle) ->
+      uloc_keytype.ulocimp_to_legacy_type_with_fallback(
+        bundle.loc_ext_key_map,
+        keyword,
+        value,
+      )
   }
 }
 
@@ -1656,12 +1592,11 @@ pub fn to_legacy_key(
         True -> Some(keyword)
         False -> None
       }
-    Some(b) ->
-      case build_loc_ext_key_map(b) {
-        None -> None
-        Some(key_map) ->
-          uloc_keytype.ulocimp_to_legacy_key_with_fallback(key_map, keyword)
-      }
+    Some(bundle) ->
+      uloc_keytype.ulocimp_to_legacy_key_with_fallback(
+        bundle.loc_ext_key_map,
+        keyword,
+      )
   }
 }
 
@@ -1716,95 +1651,25 @@ fn resolve_calendar_preference_region(
 fn build_likely_subtags_state(
   bundle: Bundle,
 ) -> Option(loclikelysubtags.LikelySubtagsState) {
-  case
-    loclikelysubtags.create_likely_subtags(adapt_likely_subtags_bundle(bundle))
-  {
+  case loclikelysubtags.create_likely_subtags(bundle) {
     Ok(state) -> Some(state)
     Error(_) -> None
   }
 }
 
-fn adapt_likely_subtags_bundle(bundle: Bundle) -> loclikelysubtags.Bundle {
-  loclikelysubtags.Bundle(
-    open_direct: fn(name) { resbund.open_direct_or_panic(bundle, name) },
-    get_by_path: fn(chain, path) {
-      let resbund_chain =
-        list.map(chain, fn(entry) {
-          resbund.LocaleChainEntry(entry.name, Some(entry.res_data))
-        })
-      case resbund.get_by_path(bundle, resbund_chain, path, 0) {
-        None -> None
-        Some(resolved) ->
-          Some(loclikelysubtags.MatchLookup(resolved.res_data, resolved.res))
-      }
-    },
-  )
-}
-
 fn get_calendar_preference(bundle: Bundle, region: String) -> Option(String) {
-  case resbund.open_direct(bundle, "supplementalData") {
-    None -> None
-    Some(supp_rd) -> {
-      let chain = [resbund.LocaleChainEntry("supplementalData", Some(supp_rd))]
-      case resbund.get_by_path(bundle, chain, "calendarPreferenceData", 0) {
-        None -> None
-        Some(cp) -> {
-          let table = resource.get_table(cp.res_data, cp.res)
-          let idx = case find_region_index(table, region) {
-            Some(i) -> Some(i)
-            None -> find_region_index(table, "001")
-          }
-          case idx {
-            None -> None
-            Some(i) -> {
-              let assert Some(get_res) = table.get_res
-              let arr = resource.get_array(cp.res_data, get_res(i))
-              case arr.length == 0 {
-                True -> None
-                False -> {
-                  let assert Some(arr_get_res) = arr.get_res
-                  let value =
-                    resource.create_resource_value(
-                      Some(cp.res_data),
-                      arr_get_res(0),
-                    )
-                  case resource.resource_value_get_string(value) {
-                    None -> None
-                    Some(s) -> Some(normalize_calendar_type(s.text))
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
+  let supplemental_data = bundle.supplemental_data
 
-fn find_region_index(
-  table: resource.ResourceTableView,
-  region: String,
-) -> Option(Int) {
-  case table.get_key {
-    None -> None
-    Some(get_key) -> find_region_index_loop(get_key, table.length, region, 0)
-  }
-}
+  let calendars = dict.get(supplemental_data.calendar_preference, region)
 
-fn find_region_index_loop(
-  get_key: fn(Int) -> String,
-  length: Int,
-  region: String,
-  i: Int,
-) -> Option(Int) {
-  case i >= length {
-    True -> None
-    False ->
-      case get_key(i) == region {
-        True -> Some(i)
-        False -> find_region_index_loop(get_key, length, region, i + 1)
-      }
+  let calendars = case calendars {
+    Ok(_) -> calendars
+    _ -> dict.get(supplemental_data.calendar_preference, "001")
+  }
+  case calendars {
+    Error(_) -> None
+    Ok([]) -> None
+    Ok([calendar, ..]) -> Some(normalize_calendar_type(calendar))
   }
 }
 
@@ -1849,5 +1714,15 @@ pub fn uloc_to_legacy_type(
 }
 
 pub fn uloc_open_available_by_type(bundle: Bundle, type_: Int) -> UEnumeration {
-  create_u_enumeration(resbund.get_available_locales_by_type(bundle, type_))
+  let locale_parents = bundle.locale_parents
+  let locales = case type_ {
+    1 -> dict.keys(locale_parents.aliases)
+    2 ->
+      list.append(
+        locale_parents.installed_locales,
+        dict.keys(locale_parents.aliases),
+      )
+    _ -> locale_parents.installed_locales
+  }
+  create_u_enumeration(locales)
 }

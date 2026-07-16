@@ -2,7 +2,7 @@ import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
 import intldate/internal/icu/locale/locdistance
 import intldate/internal/icu/locale/loclikelysubtags
 import intldate/internal/icu/locale/lsr.{type LSR}
@@ -325,9 +325,7 @@ pub fn create_locale_matcher(
     None -> builder_from_supported_locales(supported_locale_names)
   }
 
-  let likely_subtags = case
-    loclikelysubtags.create_likely_subtags(adapt_likely_subtags_bundle(bundle))
-  {
+  let likely_subtags = case loclikelysubtags.create_likely_subtags(bundle) {
     Ok(state) -> state
     Error(msg) -> panic as msg
   }
@@ -602,23 +600,6 @@ fn fold_order3(
         }
       }
   }
-}
-
-fn adapt_likely_subtags_bundle(bundle: Bundle) -> loclikelysubtags.Bundle {
-  loclikelysubtags.Bundle(
-    open_direct: fn(name) { resbund.open_direct_or_panic(bundle, name) },
-    get_by_path: fn(chain, path) {
-      let resbund_chain =
-        list.map(chain, fn(entry) {
-          resbund.LocaleChainEntry(entry.name, Some(entry.res_data))
-        })
-      case resbund.get_by_path(bundle, resbund_chain, path, 0) {
-        None -> None
-        Some(resolved) ->
-          Some(loclikelysubtags.MatchLookup(resolved.res_data, resolved.res))
-      }
-    },
-  )
 }
 
 fn get_best_supp_index(

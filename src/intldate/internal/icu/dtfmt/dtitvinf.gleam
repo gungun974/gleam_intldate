@@ -2,9 +2,10 @@ import gleam/dict.{type Dict}
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/cache
+import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/icudata/resource
-import intldate/internal/icu/icudata/uresimp
 import intldate/internal/icu/locale/uloc
 
 pub const pattern_char_base = 0x41
@@ -18,21 +19,17 @@ type IntervalFieldMap =
 
 pub type DateIntervalInfo {
   DateIntervalInfo(
-    bundle: Bundle,
-    locale_id: String,
-    cal_type: String,
     patterns: Dict(String, IntervalFieldMap),
+    skeleton_widths: List(#(String, Dict(String, Int))),
     fallback_pattern: String,
     later_date_first: Bool,
   )
 }
 
+const cache_prefix = "interval-info:"
+
 pub type BestSkeletonResult {
   BestSkeletonResult(best_skeleton: Option(String), difference_info: Int)
-}
-
-type IntervalFormatsRes {
-  IntervalFormatsRes(res: Int, res_data: resource.ResourceData)
 }
 
 fn letter_to_field(letter: String) -> Option(String) {
@@ -101,112 +98,6 @@ fn string_numeric(
   }
 }
 
-fn table_keys_and_res(
-  table: resource.ResourceTableView,
-) -> List(#(String, Int)) {
-  case table.get_key, table.get_res {
-    Some(get_key), Some(get_res) ->
-      table_keys_and_res_loop(get_key, get_res, 0, table.length)
-    _, _ -> []
-  }
-}
-
-fn table_keys_and_res_loop(
-  get_key: fn(Int) -> String,
-  get_res: fn(Int) -> Int,
-  i: Int,
-  length: Int,
-) -> List(#(String, Int)) {
-  case i >= length {
-    True -> []
-    False -> [
-      #(get_key(i), get_res(i)),
-      ..table_keys_and_res_loop(get_key, get_res, i + 1, length)
-    ]
-  }
-}
-
-fn resource_string_text(rd: resource.ResourceData, res: Int) -> Option(String) {
-  case
-    resource.resource_value_get_string(resource.create_resource_value(
-      Some(rd),
-      res,
-    ))
-  {
-    Some(s) -> Some(s.text)
-    None -> None
-  }
-}
-
-fn resource_alias_text(rd: resource.ResourceData, res: Int) -> Option(String) {
-  case
-    resource.resource_value_get_alias_string(resource.create_resource_value(
-      Some(rd),
-      res,
-    ))
-  {
-    Some(s) -> Some(s.text)
-    None -> None
-  }
-}
-
-fn parse_interval_formats_alias_target(alias_text: String) -> Option(String) {
-  case string.split_once(alias_text, "/LOCALE/calendar/") {
-    Error(_) -> None
-    Ok(#(_before, after)) ->
-      case string.split_once(after, "/intervalFormats") {
-        Error(_) -> None
-        Ok(#(cal_type, "")) ->
-          case cal_type == "" || string.contains(cal_type, "/") {
-            True -> None
-            False -> Some(cal_type)
-          }
-        Ok(#(_cal_type, _rest)) -> None
-      }
-  }
-}
-
-fn get_raw_interval_formats_res(
-  level: resbund.LocaleChainEntry,
-  cal_type: String,
-) -> Option(IntervalFormatsRes) {
-  case level.res_data {
-    None -> None
-    Some(res_data) -> {
-      let cal_res =
-        resource.get_table_item_by_key(res_data, res_data.root_res, "calendar")
-      case
-        cal_res == uresimp.res_bogus
-        || !uresimp.ures_is_table(uresimp.res_get_type(cal_res))
-      {
-        True -> None
-        False -> {
-          let cal_type_res =
-            resource.get_table_item_by_key(res_data, cal_res, cal_type)
-          case
-            cal_type_res == uresimp.res_bogus
-            || !uresimp.ures_is_table(uresimp.res_get_type(cal_type_res))
-          {
-            True -> None
-            False -> {
-              let iv_res =
-                resource.get_table_item_by_key(
-                  res_data,
-                  cal_type_res,
-                  "intervalFormats",
-                )
-              case iv_res == uresimp.res_bogus {
-                True -> None
-                False -> Some(IntervalFormatsRes(iv_res, res_data))
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
 pub type DateIntervalInfoState {
   DateIntervalInfoState(
     patterns: Dict(String, IntervalFieldMap),
@@ -234,118 +125,54 @@ fn apply_fallback_pattern(
 
 fn merge_field_map(
   existing: IntervalFieldMap,
-  sub_table: resource.ResourceTableView,
-  res_data: resource.ResourceData,
+  found: Dict(String, String),
 ) -> IntervalFieldMap {
-  merge_field_map_loop(existing, table_keys_and_res(sub_table), res_data)
-}
-
-fn merge_field_map_loop(
-  existing: IntervalFieldMap,
-  entries: List(#(String, Int)),
-  res_data: resource.ResourceData,
-) -> IntervalFieldMap {
-  case entries {
-    [] -> existing
-    [#(letter, res), ..rest] ->
-      case letter_to_field(letter) {
-        None -> merge_field_map_loop(existing, rest, res_data)
-        Some(field) ->
-          case dict.has_key(existing, field) {
-            True -> merge_field_map_loop(existing, rest, res_data)
-            False ->
-              case
-                uresimp.res_get_type(res) == uresimp.ResString
-                || uresimp.res_get_type(res) == uresimp.ResStringV2
-              {
-                False -> merge_field_map_loop(existing, rest, res_data)
-                True ->
-                  case resource_string_text(res_data, res) {
-                    None -> merge_field_map_loop(existing, rest, res_data)
-                    Some(value) ->
-                      merge_field_map_loop(
-                        dict.insert(existing, field, value),
-                        rest,
-                        res_data,
-                      )
-                  }
-              }
-          }
-      }
-  }
-}
-
-fn load_level(
-  bundle: Bundle,
-  sub_chain: List(resbund.LocaleChainEntry),
-  cal_type: String,
-  state: DateIntervalInfoState,
-) -> DateIntervalInfoState {
-  case
-    resbund.get_by_path(
-      bundle,
-      sub_chain,
-      "calendar/" <> cal_type <> "/intervalFormats",
-      0,
-    )
-  {
-    None -> state
-    Some(found) -> {
-      let table = resource.get_table(found.res_data, found.res)
-      load_level_entries(state, table_keys_and_res(table), found.res_data)
+  dict.fold(found, existing, fn(existing, letter, value) {
+    case letter_to_field(letter) {
+      None -> existing
+      Some(field) ->
+        case dict.has_key(existing, field) {
+          True -> existing
+          False -> dict.insert(existing, field, value)
+        }
     }
-  }
+  })
 }
 
-fn load_level_entries(
+fn merge_interval_formats(
   state: DateIntervalInfoState,
-  entries: List(#(String, Int)),
-  res_data: resource.ResourceData,
+  found: resource.IntervalFormats,
 ) -> DateIntervalInfoState {
-  case entries {
-    [] -> state
-    [#(key, res), ..rest] ->
-      case key {
-        "fallback" ->
-          case
-            !state.fallback_set
-            && {
-              uresimp.res_get_type(res) == uresimp.ResString
-              || uresimp.res_get_type(res) == uresimp.ResStringV2
-            }
-          {
-            False -> load_level_entries(state, rest, res_data)
-            True ->
-              case resource_string_text(res_data, res) {
-                None -> load_level_entries(state, rest, res_data)
-                Some(pattern) -> {
-                  let state =
-                    DateIntervalInfoState(
-                      ..apply_fallback_pattern(state, pattern),
-                      fallback_set: True,
-                    )
-                  load_level_entries(state, rest, res_data)
-                }
-              }
-          }
-        _ ->
-          case uresimp.ures_is_table(uresimp.res_get_type(res)) {
-            False -> load_level_entries(state, rest, res_data)
-            True -> {
-              let existing = case dict.get(state.patterns, key) {
-                Ok(m) -> m
-                Error(_) -> dict.new()
-              }
-              let sub_table = resource.get_table(res_data, res)
-              let merged = merge_field_map(existing, sub_table, res_data)
-              let state =
-                DateIntervalInfoState(
-                  ..state,
-                  patterns: dict.insert(state.patterns, key, merged),
-                )
-              load_level_entries(state, rest, res_data)
-            }
-          }
+  let state = case state.fallback_set, found.fallback {
+    False, Some(pattern) ->
+      DateIntervalInfoState(
+        ..apply_fallback_pattern(state, pattern),
+        fallback_set: True,
+      )
+    _, _ -> state
+  }
+  let patterns =
+    dict.fold(found.patterns, state.patterns, fn(acc, skeleton, fields) {
+      let existing = case dict.get(acc, skeleton) {
+        Ok(values) -> values
+        Error(_) -> dict.new()
+      }
+      dict.insert(acc, skeleton, merge_field_map(existing, fields))
+    })
+  DateIntervalInfoState(..state, patterns:)
+}
+
+fn interval_formats_for(
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  locale: String,
+  cal_type: String,
+) -> Option(resource.CalendarField(resource.IntervalFormats)) {
+  case dict.get(locales, locale) {
+    Error(_) -> None
+    Ok(by_cal) ->
+      case dict.get(by_cal, cal_type) {
+        Error(_) -> None
+        Ok(data) -> data.interval_formats
       }
   }
 }
@@ -360,7 +187,11 @@ pub fn build_date_interval_info_state(
   cal_type: String,
 ) -> DateIntervalInfoState {
   let chain =
-    resbund.open_locale_chain(bundle, uloc.get_base_name(Some(locale_id)))
+    localechain.locale_chain(
+      bundle.locale_parents,
+      uloc.get_base_name(Some(locale_id)),
+    )
+  let locales = bundle.date_interval_data_by_locale.locales
 
   let initial =
     DateIntervalInfoState(
@@ -370,12 +201,12 @@ pub fn build_date_interval_info_state(
       fallback_set: False,
     )
 
-  build_date_interval_info_state_loop(bundle, chain, cal_type, initial, [])
+  build_date_interval_info_state_loop(locales, chain, cal_type, initial, [])
 }
 
 fn build_date_interval_info_state_loop(
-  bundle: Bundle,
-  chain: List(resbund.LocaleChainEntry),
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  chain: List(String),
   cal_type: String,
   state: DateIntervalInfoState,
   loaded_calendar_types: List(String),
@@ -385,12 +216,12 @@ fn build_date_interval_info_state_loop(
     False -> {
       let loaded_calendar_types = [cal_type, ..loaded_calendar_types]
       let #(state, next_cal_type) =
-        walk_chain_levels(bundle, chain, cal_type, state, None)
+        walk_chain_levels(locales, chain, cal_type, state, None)
       case next_cal_type {
         None -> state
         Some(next) ->
           build_date_interval_info_state_loop(
-            bundle,
+            locales,
             chain,
             next,
             state,
@@ -402,8 +233,8 @@ fn build_date_interval_info_state_loop(
 }
 
 fn walk_chain_levels(
-  bundle: Bundle,
-  remaining_from_level: List(resbund.LocaleChainEntry),
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  remaining_from_level: List(String),
   cal_type: String,
   state: DateIntervalInfoState,
   next_cal_type: Option(String),
@@ -411,48 +242,31 @@ fn walk_chain_levels(
   case remaining_from_level {
     [] -> #(state, next_cal_type)
     [level, ..rest_of_full] -> {
-      case get_raw_interval_formats_res(level, cal_type) {
+      case interval_formats_for(locales, level, cal_type) {
         None ->
           walk_chain_levels(
-            bundle,
+            locales,
             rest_of_full,
             cal_type,
             state,
             next_cal_type,
           )
-        Some(raw) ->
-          case uresimp.res_get_type(raw.res) == uresimp.ResAlias {
-            True -> {
-              let next_cal_type = case
-                resource_alias_text(raw.res_data, raw.res)
-              {
-                None -> next_cal_type
-                Some(alias_text) ->
-                  case parse_interval_formats_alias_target(alias_text) {
-                    None -> next_cal_type
-                    Some(target) -> Some(target)
-                  }
-              }
-              walk_chain_levels(
-                bundle,
-                rest_of_full,
-                cal_type,
-                state,
-                next_cal_type,
-              )
-            }
-            False -> {
-              let state =
-                load_level(bundle, remaining_from_level, cal_type, state)
-              walk_chain_levels(
-                bundle,
-                rest_of_full,
-                cal_type,
-                state,
-                next_cal_type,
-              )
-            }
-          }
+        Some(resource.CalendarAliasTo(target)) ->
+          walk_chain_levels(
+            locales,
+            rest_of_full,
+            cal_type,
+            state,
+            Some(target),
+          )
+        Some(resource.CalendarValue(found)) ->
+          walk_chain_levels(
+            locales,
+            rest_of_full,
+            cal_type,
+            merge_interval_formats(state, found),
+            next_cal_type,
+          )
       }
     }
   }
@@ -463,12 +277,29 @@ pub fn create_date_interval_info(
   locale_id: String,
   cal_type: String,
 ) -> DateIntervalInfo {
+  let base_name = uloc.get_base_name(Some(locale_id))
+  let key = cache_prefix <> base_name <> "@" <> cal_type
+  case cache.get(key) {
+    Ok(info) -> info
+    Error(_) ->
+      cache.put(
+        key,
+        create_uncached_date_interval_info(bundle, locale_id, cal_type),
+      )
+  }
+}
+
+fn create_uncached_date_interval_info(
+  bundle: Bundle,
+  locale_id: String,
+  cal_type: String,
+) -> DateIntervalInfo {
   let state = build_date_interval_info_state(bundle, locale_id, cal_type)
   DateIntervalInfo(
-    bundle:,
-    locale_id:,
-    cal_type:,
     patterns: state.patterns,
+    skeleton_widths: state.patterns
+      |> dict.keys
+      |> list.map(fn(skeleton) { #(skeleton, parse_skeleton(skeleton)) }),
     fallback_pattern: state.fallback_pattern,
     later_date_first: state.later_date_first,
   )
@@ -508,10 +339,9 @@ pub fn get_best_skeleton(
   }
 
   let input_width = parse_skeleton(input_skeleton)
-  let candidates = dict.keys(info.patterns)
   let #(best_skeleton, best_match_distance_info) =
     find_best_skeleton_loop(
-      candidates,
+      info.skeleton_widths,
       input_width,
       None,
       -1,
@@ -551,7 +381,7 @@ fn replace_alternate_chars(skeleton: String) -> String {
 const infinity_distance = 999_999_999
 
 fn find_best_skeleton_loop(
-  candidates: List(String),
+  candidates: List(#(String, Dict(String, Int))),
   input_width: Dict(String, Int),
   best_skeleton: Option(String),
   best_match_distance_info: Int,
@@ -559,8 +389,7 @@ fn find_best_skeleton_loop(
 ) -> #(Option(String), Int) {
   case candidates {
     [] -> #(best_skeleton, best_match_distance_info)
-    [candidate, ..rest] -> {
-      let width = parse_skeleton(candidate)
+    [#(candidate, width), ..rest] -> {
       let fields = merge_unique_keys(dict.keys(input_width), dict.keys(width))
       let #(distance, field_difference) =
         compare_widths(input_width, width, fields, 0, 1)

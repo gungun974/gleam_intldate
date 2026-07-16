@@ -1,3 +1,4 @@
+import gleam/io
 import gleam/option
 import gleam/time/timestamp
 import intldate
@@ -20,5 +21,5 @@ pub fn main() {
     )
   // result == "mardi 24 février 2026 à 17:48"
 
-  echo result
+  io.println(result)
 }

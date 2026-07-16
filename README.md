@@ -132,13 +132,12 @@ running the tests:
 git clone https://github.com/gungun974/gleam_intldate.git
 cd gleam_intldate
 
-pnpm install
-pnpm run generate
+gleam run -m intldate_generate
 
-gleam run -m intldate_test_data --target javascript
+gleam run --target javascript -m intldate_test_data 
 gleam test
 ```
 
-`gleam run -m intldate_test_data --target javascript` generates the test data from
+`gleam run --target javascript -m intldate_test_data` generates the test data from
 Node's built-in `Intl`, so it requires a Node version bundling ICU 78.3 to match the
 pinned ICU release used elsewhere.

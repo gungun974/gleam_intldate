@@ -300,3 +300,45 @@ pub fn format_returns_error_message_for_invalid_locale_test() {
 
   assert result == "Failed to load locale: xx-XX"
 }
+
+pub fn resolved_options_returns_error_for_invalid_locale_test() {
+  let result =
+    intlrelative.resolved_options(
+      locale: option.Some("xx-XX"),
+      config: intlrelative.new(),
+    )
+
+  assert result == Error(intlrelative.FailedToLoadLocale("xx-XX"))
+}
+
+pub fn resolved_options_returns_error_for_malformed_locale_test() {
+  let result =
+    intlrelative.resolved_options(
+      locale: option.Some("en_US"),
+      config: intlrelative.new(),
+    )
+
+  assert result == Error(intlrelative.FailedToLoadLocale("en_US"))
+}
+
+pub fn resolved_options_preserves_numbering_system_extension_test() {
+  let assert Ok(options) =
+    intlrelative.resolved_options(
+      locale: option.Some("en-US-u-nu-arab"),
+      config: intlrelative.new(),
+    )
+
+  assert options.locale == "en-US-u-nu-arab"
+  assert options.numbering_system == "arab"
+}
+
+pub fn resolved_options_uses_locale_default_numbering_system_test() {
+  let assert Ok(options) =
+    intlrelative.resolved_options(
+      locale: option.Some("fa-IR"),
+      config: intlrelative.new(),
+    )
+
+  assert options.locale == "fa-IR"
+  assert options.numbering_system == "arabext"
+}

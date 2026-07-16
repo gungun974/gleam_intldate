@@ -467,16 +467,24 @@ function buildDateTimeFormatter(timeZone, locale, config) {
     ? Option$Some$0(timeZone)
     : undefined;
 
-  if (
-    localeStr &&
-    Intl.DateTimeFormat.supportedLocalesOf([localeStr]).length === 0
-  ) {
-    return {
-      error: IntlError$FailedToLoadLocale(localeStr),
-      localeStr,
-      timeZoneStr,
-      options,
-    };
+  if (localeStr) {
+    try {
+      if (Intl.DateTimeFormat.supportedLocalesOf([localeStr]).length === 0) {
+        return {
+          error: IntlError$FailedToLoadLocale(localeStr),
+          localeStr,
+          timeZoneStr,
+          options,
+        };
+      }
+    } catch (_error) {
+      return {
+        error: IntlError$FailedToLoadLocale(localeStr),
+        localeStr,
+        timeZoneStr,
+        options,
+      };
+    }
   }
 
   try {
@@ -755,14 +763,20 @@ function buildRelativeTimeFormatter(locale, config) {
   const options = buildRelativeTimeFormatOptions(config);
   const localeStr = Option$isSome(locale) ? Option$Some$0(locale) : undefined;
 
-  if (
-    localeStr &&
-    Intl.RelativeTimeFormat.supportedLocalesOf([localeStr]).length === 0
-  ) {
-    return {
-      error: Relative$IntlError$FailedToLoadLocale(localeStr),
-      localeStr,
-    };
+  if (localeStr) {
+    try {
+      if (Intl.RelativeTimeFormat.supportedLocalesOf([localeStr]).length === 0) {
+        return {
+          error: Relative$IntlError$FailedToLoadLocale(localeStr),
+          localeStr,
+        };
+      }
+    } catch (_error) {
+      return {
+        error: Relative$IntlError$FailedToLoadLocale(localeStr),
+        localeStr,
+      };
+    }
   }
 
   try {

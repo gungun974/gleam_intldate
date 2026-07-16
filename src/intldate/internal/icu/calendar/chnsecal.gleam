@@ -4,7 +4,7 @@ import gleam/option.{None}
 import intldate/internal/icu/calendar/astro
 import intldate/internal/icu/calendar/gregocal
 import intldate/internal/icu/calendar/gregoimp
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
 import intldate/internal/math
 
 pub type MonthInfo {

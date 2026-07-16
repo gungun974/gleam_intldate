@@ -1,8 +1,11 @@
+import gleam/dict
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import intldate/internal/icu/icudata/resbund.{type Bundle}
-import intldate/internal/icu/icudata/resource
-import intldate/internal/icu/icudata/uresimp
+import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/localechain
+import intldate/internal/icu/icudata/resource.{
+  type NumberingSystem, NumberingSystem,
+}
 import intldate/internal/icu/locale/uloc
 
 const default_digits = "0123456789"
@@ -16,10 +19,6 @@ const g_traditional = "traditional"
 const g_finance = "finance"
 
 const g_latn = "latn"
-
-pub type NumberingSystem {
-  NumberingSystem(radix: Int, algorithmic: Bool, desc: String, name: String)
-}
 
 pub fn create_numbering_system() -> NumberingSystem {
   NumberingSystem(
@@ -58,162 +57,32 @@ pub fn numbering_system_create_instance3(
   }
 }
 
-fn resource_string_text(rd: resource.ResourceData, res: Int) -> Option(String) {
-  case
-    resource.resource_value_get_string(resource.create_resource_value(
-      Some(rd),
-      res,
-    ))
-  {
-    Some(s) -> Some(s.text)
-    None -> None
-  }
-}
-
-fn table_keys_and_res(
-  table: resource.ResourceTableView,
-) -> List(#(String, Int)) {
-  case table.get_key, table.get_res {
-    Some(get_key), Some(get_res) ->
-      table_keys_and_res_loop(get_key, get_res, 0, table.length)
-    _, _ -> []
-  }
-}
-
-fn table_keys_and_res_loop(
-  get_key: fn(Int) -> String,
-  get_res: fn(Int) -> Int,
-  i: Int,
-  length: Int,
-) -> List(#(String, Int)) {
-  case i >= length {
-    True -> []
-    False -> [
-      #(get_key(i), get_res(i)),
-      ..table_keys_and_res_loop(get_key, get_res, i + 1, length)
-    ]
-  }
-}
-
 pub fn numbering_system_create_instance_by_name(
   bundle: Bundle,
   name: String,
 ) -> Result(NumberingSystem, String) {
-  case resbund.open_direct(bundle, "numberingSystems") {
-    None -> Error("U_UNSUPPORTED_ERROR")
-    Some(rd) -> {
-      let chain = [resbund.LocaleChainEntry("numberingSystems", Some(rd))]
-      case resbund.get_by_path(bundle, chain, "numberingSystems/" <> name, 0) {
-        None -> Error("U_UNSUPPORTED_ERROR")
-        Some(found) -> {
-          let table = resource.get_table(found.res_data, found.res)
-          let entries = table_keys_and_res(table)
-          let #(nsd, radix, algorithmic) =
-            read_ns_fields(found.res_data, entries, None, 10, 0)
-          case nsd {
-            None -> Error("U_UNSUPPORTED_ERROR")
-            Some(desc) ->
-              case
-                numbering_system_create_instance3(radix, algorithmic == 1, desc)
-              {
-                Error(e) -> Error(e)
-                Ok(ns) -> Ok(with_name(ns, name))
-              }
-          }
-        }
-      }
-    }
+  let numbering_systems = bundle.numbering_systems
+
+  case dict.get(numbering_systems.numbering_systems, name) {
+    Ok(numbering_system) -> Ok(numbering_system)
+    Error(_) -> Error("U_UNSUPPORTED_ERROR")
   }
 }
 
-fn read_ns_fields(
-  rd: resource.ResourceData,
-  entries: List(#(String, Int)),
-  nsd: Option(String),
-  radix: Int,
-  algorithmic: Int,
-) -> #(Option(String), Int, Int) {
-  case entries {
-    [] -> #(nsd, radix, algorithmic)
-    [#(key, res), ..rest] ->
-      case key {
-        "desc" ->
-          read_ns_fields(
-            rd,
-            rest,
-            resource_string_text(rd, res),
-            radix,
-            algorithmic,
-          )
-        "radix" ->
-          case uresimp.res_get_type(res) == uresimp.ResInt {
-            True ->
-              read_ns_fields(
-                rd,
-                rest,
-                nsd,
-                resource.resource_value_get_int(resource.create_resource_value(
-                  Some(rd),
-                  res,
-                )),
-                algorithmic,
-              )
-            False -> read_ns_fields(rd, rest, nsd, radix, algorithmic)
-          }
-        "algorithmic" ->
-          case uresimp.res_get_type(res) == uresimp.ResInt {
-            True ->
-              read_ns_fields(
-                rd,
-                rest,
-                nsd,
-                radix,
-                resource.resource_value_get_int(resource.create_resource_value(
-                  Some(rd),
-                  res,
-                )),
-              )
-            False -> read_ns_fields(rd, rest, nsd, radix, algorithmic)
-          }
-        _ -> read_ns_fields(rd, rest, nsd, radix, algorithmic)
-      }
-  }
-}
-
-fn get_string_by_key_with_fallback_from_chain(
-  bundle: Bundle,
-  chain: List(resbund.LocaleChainEntry),
-  table_key: String,
+fn find_number_elements_in_chain(
+  locales: dict.Dict(String, dict.Dict(String, String)),
+  chain: List(String),
   item_key: String,
 ) -> Option(String) {
   case chain {
     [] -> None
-    [level, ..rest] ->
-      case
-        resbund.get_by_path(bundle, [level], table_key <> "/" <> item_key, 0)
-      {
-        None ->
-          get_string_by_key_with_fallback_from_chain(
-            bundle,
-            rest,
-            table_key,
-            item_key,
-          )
-        Some(found) ->
-          case
-            resource.resource_value_get_string(resource.create_resource_value(
-              Some(found.res_data),
-              found.res,
-            ))
-          {
-            Some(s) if s.length > 0 -> Some(s.text)
-            _ ->
-              get_string_by_key_with_fallback_from_chain(
-                bundle,
-                rest,
-                table_key,
-                item_key,
-              )
+    [name, ..rest] ->
+      case dict.get(locales, name) {
+        Error(_) -> find_number_elements_in_chain(locales, rest, item_key)
+        Ok(elements) ->
+          case dict.get(elements, item_key) {
+            Ok(value) if value != "" -> Some(value)
+            _ -> find_number_elements_in_chain(locales, rest, item_key)
           }
       }
   }
@@ -222,12 +91,15 @@ fn get_string_by_key_with_fallback_from_chain(
 fn get_string_by_key_with_fallback(
   bundle: Bundle,
   locale_id: String,
-  table_key: String,
   item_key: String,
 ) -> Option(String) {
+  let data = bundle.number_elements_by_locale
   let chain =
-    resbund.open_locale_chain(bundle, uloc.get_base_name(Some(locale_id)))
-  get_string_by_key_with_fallback_from_chain(bundle, chain, table_key, item_key)
+    localechain.locale_chain(
+      bundle.locale_parents,
+      uloc.get_base_name(Some(locale_id)),
+    )
+  find_number_elements_in_chain(data.locales, chain, item_key)
 }
 
 type ResolveState {
@@ -242,14 +114,7 @@ fn resolve_numbering_system_buffer(
   case state.resolved {
     True -> state
     False ->
-      case
-        get_string_by_key_with_fallback(
-          bundle,
-          locale_id,
-          "NumberElements",
-          state.buffer,
-        )
-      {
+      case get_string_by_key_with_fallback(bundle, locale_id, state.buffer) {
         Some(ns_name) if ns_name != "" ->
           ResolveState(..state, buffer: ns_name, resolved: True)
         _ ->

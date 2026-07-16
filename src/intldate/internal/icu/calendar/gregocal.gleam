@@ -1,8 +1,7 @@
-import gleam/list
+import gleam/dict
 import gleam/option.{type Option, None, Some}
 import intldate/internal/icu/calendar/gregoimp
-import intldate/internal/icu/icudata/resbund.{type Bundle}
-import intldate/internal/icu/icudata/resource
+import intldate/internal/icu/icudata/bundle.{type Bundle}
 import intldate/internal/icu/locale/loclikelysubtags
 import intldate/internal/icu/locale/uloc
 import intldate/internal/math
@@ -39,45 +38,13 @@ pub type CalendarFields {
   CalendarFields(era: Int, year: Int, extended_year: Int, common: CommonFields)
 }
 
-fn fw_to_day(fw: String) -> Option(Int) {
-  case fw {
-    "sun" -> Some(1)
-    "mon" -> Some(2)
-    "tue" -> Some(3)
-    "wed" -> Some(4)
-    "thu" -> Some(5)
-    "fri" -> Some(6)
-    "sat" -> Some(7)
-    _ -> None
-  }
-}
-
 fn build_likely_subtags_state(
   bundle: Bundle,
 ) -> Option(loclikelysubtags.LikelySubtagsState) {
-  case
-    loclikelysubtags.create_likely_subtags(adapt_likely_subtags_bundle(bundle))
-  {
+  case loclikelysubtags.create_likely_subtags(bundle) {
     Ok(state) -> Some(state)
     Error(_) -> None
   }
-}
-
-fn adapt_likely_subtags_bundle(bundle: Bundle) -> loclikelysubtags.Bundle {
-  loclikelysubtags.Bundle(
-    open_direct: fn(name) { resbund.open_direct_or_panic(bundle, name) },
-    get_by_path: fn(chain, path) {
-      let resbund_chain =
-        list.map(chain, fn(entry) {
-          resbund.LocaleChainEntry(entry.name, Some(entry.res_data))
-        })
-      case resbund.get_by_path(bundle, resbund_chain, path, 0) {
-        None -> None
-        Some(resolved) ->
-          Some(loclikelysubtags.MatchLookup(resolved.res_data, resolved.res))
-      }
-    },
-  )
 }
 
 pub fn get_region_for_supplemental_data(
@@ -100,40 +67,23 @@ pub fn get_region_for_supplemental_data(
 }
 
 pub fn get_week_data(bundle: Bundle, locale_id: String) -> WeekData {
-  case resbund.open_direct(bundle, "supplementalData") {
-    None -> WeekData(ucal_sunday, 1)
-    Some(rd) -> {
-      let chain = [resbund.LocaleChainEntry("supplementalData", Some(rd))]
-      let region = get_region_for_supplemental_data(bundle, locale_id)
-      let found = case region {
-        "" -> None
-        _ -> resbund.get_by_path(bundle, chain, "weekData/" <> region, 0)
-      }
-      let found = case found {
-        Some(_) -> found
-        None -> resbund.get_by_path(bundle, chain, "weekData/001", 0)
-      }
-      case found {
-        None -> WeekData(ucal_sunday, 1)
-        Some(resolved) -> {
-          let value =
-            resource.create_resource_value(
-              Some(resolved.res_data),
-              resolved.res,
-            )
-          case resource.resource_value_get_int_vector(value) {
-            Some([first_day_of_week, minimal_days_in_first_week, ..]) -> {
-              let fw = uloc.get_keyword_value(Some(locale_id), "fw")
-              let first_day_of_week = case fw_to_day(fw) {
-                Some(day) -> day
-                None -> first_day_of_week
-              }
-              WeekData(first_day_of_week:, minimal_days_in_first_week:)
-            }
-            _ -> WeekData(ucal_sunday, 1)
-          }
-        }
-      }
+  let supplemental_data = bundle.supplemental_data
+
+  let region = get_region_for_supplemental_data(bundle, locale_id)
+
+  let found = case region {
+    "" -> Error(Nil)
+    _ -> dict.get(supplemental_data.week_data, region)
+  }
+
+  let found = case found {
+    Ok(_) -> found
+    _ -> dict.get(supplemental_data.week_data, "001")
+  }
+  case found {
+    Error(_) -> WeekData(ucal_sunday, 1)
+    Ok(value) -> {
+      WeekData(first_day_of_week: value.0, minimal_days_in_first_week: value.1)
     }
   }
 }

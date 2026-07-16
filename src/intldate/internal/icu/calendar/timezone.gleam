@@ -1,10 +1,8 @@
 import gleam/dict.{type Dict}
-import gleam/list
 import gleam/option.{type Option, None, Some}
 import intldate/internal/icu/calendar/gregoimp
-import intldate/internal/icu/icudata/cache
-import intldate/internal/icu/icudata/resource
-import intldate/internal/icu/locale/zonemeta.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/resource.{type ZoneInfo64}
 import intldate/internal/math
 
 const ucal_january = 0
@@ -69,39 +67,6 @@ type TransitionWindow {
   TransitionWindow(previous: Option(#(Int, Int)), next: Option(#(Int, Int)))
 }
 
-fn find_key(
-  _rd: resource.ResourceData,
-  table: resource.ResourceTableView,
-  key: String,
-) -> Option(Int) {
-  case table.get_key, table.get_res {
-    Some(get_key), Some(get_res) ->
-      find_key_loop(get_key, get_res, table.length, key, 0)
-    _, _ -> None
-  }
-}
-
-fn find_key_loop(
-  get_key: fn(Int) -> String,
-  get_res: fn(Int) -> Int,
-  length: Int,
-  key: String,
-  i: Int,
-) -> Option(Int) {
-  case i >= length {
-    True -> None
-    False ->
-      case get_key(i) == key {
-        True -> Some(get_res(i))
-        False -> find_key_loop(get_key, get_res, length, key, i + 1)
-      }
-  }
-}
-
-fn combine64(hi: Int, lo: Int) -> Int {
-  hi * 4_294_967_296 + lo
-}
-
 fn decode_rule(month: Int, day: Int, day_of_week: Int) -> DecodedRule {
   case day == 0 {
     True -> DecodedRule(DomMode, month, day, 0)
@@ -123,81 +88,17 @@ fn decode_rule(month: Int, day: Int, day_of_week: Int) -> DecodedRule {
   }
 }
 
-fn int_vector_or_empty(
-  rd: resource.ResourceData,
-  res: Option(Int),
-) -> List(Int) {
-  case res {
-    None -> []
-    Some(r) ->
-      case
-        resource.resource_value_get_int_vector(resource.create_resource_value(
-          Some(rd),
-          r,
-        ))
-      {
-        Some(vec) -> vec
-        None -> []
-      }
-  }
-}
-
-fn combine_pairs(arr: List(Int)) -> List(Int) {
-  case arr {
-    [hi, lo, ..rest] -> [combine64(hi, lo), ..combine_pairs(rest)]
-    _ -> []
-  }
-}
-
 fn load_final_rule(
-  rd: resource.ResourceData,
-  table: resource.ResourceTableView,
-  rules_table: Option(resource.ResourceTableView),
+  final_rule: Option(resource.FinalRule),
+  rules: dict.Dict(String, List(Int)),
 ) -> Option(FinalRule) {
-  case find_key(rd, table, "finalRule") {
+  case final_rule {
     None -> None
-    Some(final_rule_res) -> {
-      let final_rule_name = case
-        resource.resource_value_get_string(resource.create_resource_value(
-          Some(rd),
-          final_rule_res,
-        ))
-      {
-        Some(s) -> s.text
-        None -> ""
-      }
-      let final_raw = case find_key(rd, table, "finalRaw") {
-        None -> 0
-        Some(r) ->
-          resource.resource_value_get_int(resource.create_resource_value(
-            Some(rd),
-            r,
-          ))
-      }
-      let final_year = case find_key(rd, table, "finalYear") {
-        None -> 0
-        Some(r) ->
-          resource.resource_value_get_int(resource.create_resource_value(
-            Some(rd),
-            r,
-          ))
-      }
-      case rules_table {
-        None -> None
-        Some(rules) ->
-          case find_key(rd, rules, final_rule_name) {
-            None -> None
-            Some(rule_res) ->
-              case
-                resource.resource_value_get_int_vector(
-                  resource.create_resource_value(Some(rd), rule_res),
-                )
-              {
-                None -> None
-                Some(rule_data) ->
-                  build_final_rule(final_raw, final_year, rule_data)
-              }
-          }
+    Some(final_rule) -> {
+      case dict.get(rules, final_rule.rule) {
+        Error(_) -> None
+        Ok(rule_data) ->
+          build_final_rule(final_rule.raw, final_rule.year, rule_data)
       }
     }
   }
@@ -235,91 +136,32 @@ fn build_final_rule(
 }
 
 pub fn load_zone_data(
-  bundle: Bundle,
+  zone_info: ZoneInfo64,
   canonical_tzid: String,
 ) -> Option(ZoneData) {
-  let key = "zonedata\n" <> bundle.data_path <> "\n" <> canonical_tzid
-  case cache.get(key) {
-    Ok(cached) -> cached
-    Error(_) ->
-      case uncached_load_zone_data(bundle, canonical_tzid) {
-        Some(data) -> cache.put(key, Some(data))
-        None -> None
-      }
+  let zone = dict.get(zone_info.zones, canonical_tzid)
+
+  let zone = case zone {
+    Ok(resource.ZoneAlias(alias)) -> dict.get(zone_info.zones, alias)
+    _ -> zone
   }
-}
 
-fn uncached_load_zone_data(
-  bundle: Bundle,
-  canonical_tzid: String,
-) -> Option(ZoneData) {
-  case zonemeta.get_zone_resource_table(bundle, canonical_tzid) {
-    None -> None
-    Some(found) -> {
-      let rd = found.rd
-      let table = found.table
-
-      let trans_pre32 =
-        int_vector_or_empty(rd, find_key(rd, table, "transPre32"))
-      let trans = int_vector_or_empty(rd, find_key(rd, table, "trans"))
-      let trans_post32 =
-        int_vector_or_empty(rd, find_key(rd, table, "transPost32"))
-
-      let transitions =
-        list_append3(
-          combine_pairs(trans_pre32),
-          trans,
-          combine_pairs(trans_post32),
-        )
-      let transitions_count = list.length(transitions)
-      let transitions_index =
-        list.index_fold(transitions, dict.new(), fn(acc, transition, index) {
-          dict.insert(acc, index, transition)
-        })
-
-      let type_offsets = case find_key(rd, table, "typeOffsets") {
-        None -> []
-        Some(r) ->
-          case
-            resource.resource_value_get_int_vector(
-              resource.create_resource_value(Some(rd), r),
-            )
-          {
-            Some(vec) -> vec
-            None -> []
-          }
-      }
-
-      let type_map_data = case find_key(rd, table, "typeMap") {
-        None -> None
-        Some(r) ->
-          resource.resource_value_get_binary(resource.create_resource_value(
-            Some(rd),
-            r,
-          ))
-      }
-
-      let final_rule = load_final_rule(rd, table, found.rules_table)
-
+  case zone {
+    Ok(resource.Zone(
+      transitions_count:,
+      transitions_index:,
+      type_offsets:,
+      type_map:,
+      final_rule:,
+    )) ->
       Some(ZoneData(
         transitions_count:,
         transitions_index:,
         type_offsets:,
-        type_map_data:,
-        final_rule:,
+        type_map_data: type_map,
+        final_rule: load_final_rule(final_rule, zone_info.rules),
       ))
-    }
-  }
-}
-
-fn list_append3(a: List(Int), b: List(Int), c: List(Int)) -> List(Int) {
-  case a {
-    [] ->
-      case b {
-        [] -> c
-        [head, ..tail] -> [head, ..list_append3([], tail, c)]
-      }
-    [head, ..tail] -> [head, ..list_append3(tail, b, c)]
+    _ -> None
   }
 }
 
@@ -679,7 +521,8 @@ pub fn get_offset(
   canonical_tzid: String,
   epoch_millis: Int,
 ) -> ZoneOffset {
-  case load_zone_data(bundle, canonical_tzid) {
+  let zone_info = bundle.zone_info_64
+  case load_zone_data(zone_info, canonical_tzid) {
     None -> ZoneOffset(0, 0)
     Some(zone_data) ->
       case zone_data.final_rule {
@@ -780,7 +623,8 @@ pub fn has_dst_transition_nearby(
   epoch_millis: Int,
   range_ms: Int,
 ) -> Bool {
-  case load_zone_data(bundle, canonical_tzid) {
+  let zone_info = bundle.zone_info_64
+  case load_zone_data(zone_info, canonical_tzid) {
     None -> False
     Some(zone_data) ->
       case zone_data.final_rule {

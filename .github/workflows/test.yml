@@ -9,27 +9,24 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-          run_install: false
       - uses: actions/setup-node@v4
         with:
           node-version: "24.16.0"
-          cache: pnpm
       - uses: erlef/setup-beam@v1
+        env:
+          # setup-beam uses ImageOS to select an OTP build compatible with
+          # the runner's OpenSSL version. act may otherwise report ubuntu20.
+          ImageOS: ubuntu24
         with:
           otp-version: "28"
           gleam-version: "1.17.0"
           rebar3-version: "3"
           # elixir-version: "1"
-      - run: pnpm install --frozen-lockfile
-      - run: gleam deps download
-      - run: pnpm run generate
-      - run: gleam run -m intldate_test_data --target=javascript
+      - run: gleam run -m intldate_generate
+      - run: gleam run --target javascript -m intldate_test_data
       - run: gleam test --target=javascript
       - run: gleam test --target=erlang
       - run: gleam format --check src test

@@ -1,9 +1,12 @@
+import gleam/dict
 import gleam/float
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/cache
+import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/icudata/resource
 import intldate/internal/icu/locale/uloc
 import intldate/internal/icu/numsys/numsys
@@ -38,7 +41,25 @@ pub type LocaleData {
     decimal_separator: String,
     grouping_separator: String,
     minus_sign: String,
-    digits: String,
+    digits: Digits,
+  )
+}
+
+pub type Digits {
+  Digits(
+    ascii: Bool,
+    values: #(
+      String,
+      String,
+      String,
+      String,
+      String,
+      String,
+      String,
+      String,
+      String,
+      String,
+    ),
   )
 }
 
@@ -57,16 +78,15 @@ fn char_code(c: String) -> Int {
   }
 }
 
-pub fn localize_digits(str: String, digits: String) -> String {
-  case digits == "" || digits == "0123456789" {
+pub fn localize_digits(str: String, digits: Digits) -> String {
+  case digits.ascii {
     True -> str
     False -> {
-      let localized_digits = digits_tuple(digits)
       string.to_graphemes(str)
       |> list.map(fn(ch) {
         let code = char_code(ch)
         case code >= 48 && code <= 57 {
-          True -> tuple_digit_at(localized_digits, code - 48, ch)
+          True -> tuple_digit_at(digits.values, code - 48, ch)
           False -> ch
         }
       })
@@ -75,35 +95,39 @@ pub fn localize_digits(str: String, digits: String) -> String {
   }
 }
 
-fn digits_tuple(
-  digits: String,
-) -> #(
-  String,
-  String,
-  String,
-  String,
-  String,
-  String,
-  String,
-  String,
-  String,
-  String,
-) {
+pub fn prepare_digits(digits: String) -> Digits {
   case string.to_graphemes(digits) {
-    [d0, d1, d2, d3, d4, d5, d6, d7, d8, d9] -> #(
-      d0,
-      d1,
-      d2,
-      d3,
-      d4,
-      d5,
-      d6,
-      d7,
-      d8,
-      d9,
-    )
-    _ -> #("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
+    [d0, d1, d2, d3, d4, d5, d6, d7, d8, d9] ->
+      Digits(ascii: digits == "0123456789", values: #(
+        d0,
+        d1,
+        d2,
+        d3,
+        d4,
+        d5,
+        d6,
+        d7,
+        d8,
+        d9,
+      ))
+    _ ->
+      Digits(ascii: True, values: #(
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+      ))
   }
+}
+
+pub fn digits_are_ascii(digits: Digits) -> Bool {
+  digits.ascii
 }
 
 fn tuple_digit_at(
@@ -137,15 +161,26 @@ fn tuple_digit_at(
   }
 }
 
-pub fn get_locale_digits(bundle: Bundle, locale_id: String) -> String {
+pub fn get_locale_digits(bundle: Bundle, locale_id: String) -> Digits {
   let ns = numsys.create_instance_for_locale(bundle, locale_id)
+  get_numbering_system_digits(ns)
+}
+
+fn get_numbering_system_digits(ns: resource.NumberingSystem) -> Digits {
   let description = numsys.numbering_system_get_description(ns)
+  case !numsys.numbering_system_is_algorithmic(ns) {
+    True -> prepare_digits(description)
+    False -> prepare_digits("0123456789")
+  }
+}
+
+fn selected_numbering_system_name(ns: resource.NumberingSystem) -> String {
   case
     !numsys.numbering_system_is_algorithmic(ns)
-    && list.length(string.to_graphemes(description)) == 10
+    && numsys.numbering_system_get_name(ns) != ""
   {
-    True -> description
-    False -> "0123456789"
+    True -> numsys.numbering_system_get_name(ns)
+    False -> "latn"
   }
 }
 
@@ -193,49 +228,101 @@ fn second_group_from_end(items: List(a), default: a) -> a {
   }
 }
 
-fn resource_string_text(rd: resource.ResourceData, res: Int) -> Option(String) {
-  case
-    resource.resource_value_get_string(resource.create_resource_value(
-      Some(rd),
-      res,
-    ))
-  {
-    Some(s) -> Some(s.text)
-    None -> None
-  }
-}
-
-fn table_keys_and_res(
-  table: resource.ResourceTableView,
-) -> List(#(String, Int)) {
-  case table.get_key, table.get_res {
-    Some(get_key), Some(get_res) ->
-      table_keys_and_res_loop(get_key, get_res, 0, table.length)
-    _, _ -> []
-  }
-}
-
-fn table_keys_and_res_loop(
-  get_key: fn(Int) -> String,
-  get_res: fn(Int) -> Int,
-  i: Int,
-  length: Int,
-) -> List(#(String, Int)) {
-  case i >= length {
-    True -> []
-    False -> [
-      #(get_key(i), get_res(i)),
-      ..table_keys_and_res_loop(get_key, get_res, i + 1, length)
-    ]
-  }
-}
-
-type SymbolsAcc {
-  SymbolsAcc(
+type ResolvedNsData {
+  ResolvedNsData(
     decimal_separator: Option(String),
     grouping_separator: Option(String),
     minus_sign: Option(String),
+    decimal_format_pattern: Option(String),
   )
+}
+
+fn ns_data_fully_resolved(acc: ResolvedNsData) -> Bool {
+  option.is_some(acc.decimal_separator)
+  && option.is_some(acc.grouping_separator)
+  && option.is_some(acc.minus_sign)
+  && option.is_some(acc.decimal_format_pattern)
+}
+
+fn merge_ns_data(
+  acc: ResolvedNsData,
+  found: resource.NumberSystemSymbols,
+) -> ResolvedNsData {
+  ResolvedNsData(
+    decimal_separator: option.or(acc.decimal_separator, found.decimal_separator),
+    grouping_separator: option.or(
+      acc.grouping_separator,
+      found.grouping_separator,
+    ),
+    minus_sign: option.or(acc.minus_sign, found.minus_sign),
+    decimal_format_pattern: option.or(
+      acc.decimal_format_pattern,
+      found.decimal_format_pattern,
+    ),
+  )
+}
+
+fn resolve_ns_data_loop(
+  chain: List(String),
+  ns_name: String,
+  data: dict.Dict(String, dict.Dict(String, resource.NumberSystemSymbols)),
+  acc: ResolvedNsData,
+) -> ResolvedNsData {
+  case ns_data_fully_resolved(acc) {
+    True -> acc
+    False ->
+      case chain {
+        [] -> acc
+        [name, ..rest] -> {
+          let acc = case dict.get(data, name) {
+            Error(_) -> acc
+            Ok(by_ns) ->
+              case dict.get(by_ns, ns_name) {
+                Error(_) -> acc
+                Ok(found) -> merge_ns_data(acc, found)
+              }
+          }
+          resolve_ns_data_loop(rest, ns_name, data, acc)
+        }
+      }
+  }
+}
+
+fn resolve_ns_data(
+  bundle: Bundle,
+  locale_id: String,
+  ns_name: String,
+) -> ResolvedNsData {
+  let base_name = uloc.get_base_name(Some(locale_id))
+  let key = "decimal-symbols:" <> base_name <> "@" <> ns_name
+  case cache.get(key) {
+    Ok(data) -> data
+    Error(_) ->
+      cache.put(key, resolve_ns_data_uncached(bundle, base_name, ns_name))
+  }
+}
+
+fn resolve_ns_data_uncached(
+  bundle: Bundle,
+  locale_id: String,
+  ns_name: String,
+) -> ResolvedNsData {
+  let data = bundle.number_system_data_by_locale
+  let chain = localechain.locale_chain(bundle.locale_parents, locale_id)
+  resolve_ns_data_loop(
+    chain,
+    ns_name,
+    data.locales,
+    ResolvedNsData(None, None, None, None),
+  )
+}
+
+pub fn load_decimal_separator(
+  bundle: Bundle,
+  locale_id: String,
+  ns_name: String,
+) -> Option(String) {
+  resolve_ns_data(bundle, locale_id, ns_name).decimal_separator
 }
 
 pub fn load_decimal_format_symbols(
@@ -243,118 +330,34 @@ pub fn load_decimal_format_symbols(
   locale_id: String,
   ns_name: String,
 ) -> DecimalFormatSymbols {
-  let chain = resbund.open_locale_chain(bundle, locale_id)
-  let acc =
-    load_decimal_format_symbols_loop(
-      bundle,
-      chain,
-      ns_name,
-      SymbolsAcc(None, None, None),
-    )
+  let resolved = resolve_ns_data(bundle, locale_id, ns_name)
   DecimalFormatSymbols(
-    decimal_separator: option.unwrap(acc.decimal_separator, "."),
-    grouping_separator: option.unwrap(acc.grouping_separator, ","),
-    minus_sign: option.unwrap(acc.minus_sign, "-"),
+    decimal_separator: option.unwrap(resolved.decimal_separator, "."),
+    grouping_separator: option.unwrap(resolved.grouping_separator, ","),
+    minus_sign: option.unwrap(resolved.minus_sign, "-"),
   )
-}
-
-fn load_decimal_format_symbols_loop(
-  bundle: Bundle,
-  chain: List(resbund.LocaleChainEntry),
-  ns_name: String,
-  acc: SymbolsAcc,
-) -> SymbolsAcc {
-  case
-    option.is_some(acc.decimal_separator)
-    && option.is_some(acc.grouping_separator)
-    && option.is_some(acc.minus_sign)
-  {
-    True -> acc
-    False ->
-      case chain {
-        [] -> acc
-        [level, ..rest] ->
-          case
-            resbund.get_by_path(
-              bundle,
-              [level],
-              "NumberElements/" <> ns_name <> "/symbols",
-              0,
-            )
-          {
-            None -> load_decimal_format_symbols_loop(bundle, rest, ns_name, acc)
-            Some(found) -> {
-              let table = resource.get_table(found.res_data, found.res)
-              let entries = table_keys_and_res(table)
-              let acc = apply_symbol_entries(entries, found.res_data, acc)
-              load_decimal_format_symbols_loop(bundle, rest, ns_name, acc)
-            }
-          }
-      }
-  }
-}
-
-fn apply_symbol_entries(
-  entries: List(#(String, Int)),
-  res_data: resource.ResourceData,
-  acc: SymbolsAcc,
-) -> SymbolsAcc {
-  case entries {
-    [] -> acc
-    [#(key, res), ..rest] -> {
-      let acc = case key, acc.decimal_separator {
-        "decimal", None ->
-          SymbolsAcc(
-            ..acc,
-            decimal_separator: resource_string_text(res_data, res),
-          )
-        _, _ -> acc
-      }
-      let acc = case key, acc.grouping_separator {
-        "group", None ->
-          SymbolsAcc(
-            ..acc,
-            grouping_separator: resource_string_text(res_data, res),
-          )
-        _, _ -> acc
-      }
-      let acc = case key, acc.minus_sign {
-        "minusSign", None ->
-          SymbolsAcc(..acc, minus_sign: resource_string_text(res_data, res))
-        _, _ -> acc
-      }
-      apply_symbol_entries(rest, res_data, acc)
-    }
-  }
 }
 
 pub fn load_locale_data(bundle: Bundle, locale_id: String) -> LocaleData {
   let base_name = uloc.get_base_name(Some(locale_id))
   let ns = numsys.create_instance_for_locale(bundle, locale_id)
-  let ns_name = case
-    !numsys.numbering_system_is_algorithmic(ns)
-    && numsys.numbering_system_get_name(ns) != ""
-  {
-    True -> numsys.numbering_system_get_name(ns)
-    False -> "latn"
+  let ns_name = selected_numbering_system_name(ns)
+  let key = "decimal-locale-data:" <> base_name <> "@" <> ns_name
+  case cache.get(key) {
+    Ok(data) -> data
+    Error(_) ->
+      cache.put(key, load_locale_data_uncached(bundle, base_name, ns_name, ns))
   }
-  let chain = resbund.open_locale_chain(bundle, base_name)
-  let pattern = case
-    resbund.get_by_path(
-      bundle,
-      chain,
-      "NumberElements/" <> ns_name <> "/patterns/decimalFormat",
-      0,
-    )
-  {
-    None -> "#,##0.###"
-    Some(found) ->
-      option.unwrap(
-        resource_string_text(found.res_data, found.res),
-        "#,##0.###",
-      )
-  }
-  let symbols = load_decimal_format_symbols(bundle, base_name, ns_name)
+}
+
+fn load_locale_data_uncached(
+  bundle: Bundle,
+  base_name: String,
+  ns_name: String,
+  ns: resource.NumberingSystem,
+) -> LocaleData {
+  let resolved = resolve_ns_data_uncached(bundle, base_name, ns_name)
+  let pattern = option.unwrap(resolved.decimal_format_pattern, "#,##0.###")
   let info = parse_pattern(pattern)
   LocaleData(
     grouping_used: info.grouping_used,
@@ -362,10 +365,10 @@ pub fn load_locale_data(bundle: Bundle, locale_id: String) -> LocaleData {
     secondary_grouping_size: info.secondary_grouping_size,
     minimum_fraction_digits: info.minimum_fraction_digits,
     maximum_fraction_digits: info.maximum_fraction_digits,
-    decimal_separator: symbols.decimal_separator,
-    grouping_separator: symbols.grouping_separator,
-    minus_sign: symbols.minus_sign,
-    digits: get_locale_digits(bundle, locale_id),
+    decimal_separator: option.unwrap(resolved.decimal_separator, "."),
+    grouping_separator: option.unwrap(resolved.grouping_separator, ","),
+    minus_sign: option.unwrap(resolved.minus_sign, "-"),
+    digits: get_numbering_system_digits(ns),
   )
 }
 

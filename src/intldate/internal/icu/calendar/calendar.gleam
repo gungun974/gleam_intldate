@@ -11,7 +11,7 @@ import intldate/internal/icu/calendar/iso8601cal
 import intldate/internal/icu/calendar/japancal
 import intldate/internal/icu/calendar/persncal
 import intldate/internal/icu/calendar/taiwncal
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
 
 pub fn compute_fields_for_calendar(
   cal_type: String,

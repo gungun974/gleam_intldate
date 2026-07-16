@@ -75,6 +75,8 @@ pub fn format(
 pub type IntlError {
   /// The requested locale could not be loaded or resolved.
   FailedToLoadLocale(inner: String)
+  /// The bundled locale data could not be loaded or validated.
+  FailedToLoadData(inner: String)
   /// Any error not accounted for by this type.
   Unknown(inner: String)
 }
@@ -90,6 +92,7 @@ pub type IntlError {
 pub fn describe_error(error: IntlError) -> String {
   case error {
     FailedToLoadLocale(inner) -> "Failed to load locale: " <> inner
+    FailedToLoadData(inner) -> "Failed to load data: " <> inner
     Unknown(inner) -> "Unknown error: " <> inner
   }
 }
@@ -180,10 +183,12 @@ fn raw_format(
       locale,
       map_style(config.style),
       map_numeric(config.numeric),
+      map_locale_matcher(config.locale_matcher),
     )
   {
     Ok(formatted) -> Ok(formatted)
     Error(icu.FailedToLoadLocale(inner)) -> Error(FailedToLoadLocale(inner))
+    Error(icu.FailedToLoadData(inner)) -> Error(FailedToLoadData(inner))
     Error(icu.FailedToLoadTimeZone(inner))
     | Error(icu.FailedToLoadCalendar(inner))
     | Error(icu.Unknown(inner)) -> Error(Unknown(inner))
@@ -206,10 +211,12 @@ fn raw_format_to_parts(
       locale,
       map_style(config.style),
       map_numeric(config.numeric),
+      map_locale_matcher(config.locale_matcher),
     )
   {
     Ok(parts) -> Ok(list.map(parts, map_icu_relative_part))
     Error(icu.FailedToLoadLocale(inner)) -> Error(FailedToLoadLocale(inner))
+    Error(icu.FailedToLoadData(inner)) -> Error(FailedToLoadData(inner))
     Error(icu.FailedToLoadTimeZone(inner))
     | Error(icu.FailedToLoadCalendar(inner))
     | Error(icu.Unknown(inner)) -> Error(Unknown(inner))
@@ -223,18 +230,26 @@ fn raw_resolved_options(
   locale: Option(String),
   config: RelativeTimeFormatConfig,
 ) -> Result(RelativeTimeResolvedOptions, IntlError) {
-  Ok(RelativeTimeResolvedOptions(
-    locale: option.unwrap(locale, ""),
-    numbering_system: numbering_system_name(locale),
-    style: style_name(option.unwrap(config.style, Long)),
-    numeric: numeric_name(option.unwrap(config.numeric, Always)),
-  ))
-}
-
-fn numbering_system_name(locale: Option(String)) -> String {
-  case locale {
-    Some("ar-SA") -> "arab"
-    _ -> "latn"
+  case
+    core.relative_resolved_options(
+      locale,
+      map_locale_matcher(config.locale_matcher),
+    )
+  {
+    Ok(#(resolved_locale, numbering_system)) ->
+      Ok(RelativeTimeResolvedOptions(
+        locale: resolved_locale,
+        numbering_system:,
+        style: style_name(option.unwrap(config.style, Long)),
+        numeric: numeric_name(option.unwrap(config.numeric, Always)),
+      ))
+    Error(icu.FailedToLoadLocale(inner)) -> Error(FailedToLoadLocale(inner))
+    Error(icu.FailedToLoadData(inner)) -> Error(FailedToLoadData(inner))
+    Error(icu.FailedToLoadTimeZone(inner))
+    | Error(icu.FailedToLoadCalendar(inner))
+    | Error(icu.Unknown(inner)) -> Error(Unknown(inner))
+    Error(icu.SystemTimeZoneUnavailable) ->
+      Error(Unknown("System time zone unavailable"))
   }
 }
 
@@ -263,6 +278,15 @@ fn map_numeric(numeric: Option(Numeric)) -> core.RelativeNumeric {
   case numeric {
     Some(Auto) -> core.NumericAuto
     Some(Always) | None -> core.NumericAlways
+  }
+}
+
+fn map_locale_matcher(
+  matcher: Option(LocaleMatcher),
+) -> core.LocaleMatcherStyle {
+  case matcher {
+    Some(LocaleMatcherLookup) -> core.LocaleMatcherLookup
+    Some(LocaleMatcherBestFit) | None -> core.LocaleMatcherBestFit
   }
 }
 

@@ -829,6 +829,36 @@ pub fn format_with_calendar_japanese_test() {
   assert result == "令和8/2/24"
 }
 
+pub fn format_with_calendar_japanese_era_boundary_test() {
+  let assert Ok(heisei) = timestamp.parse_rfc3339("2019-04-30T12:00:00+00:00")
+  let assert Ok(reiwa) = timestamp.parse_rfc3339("2019-05-01T12:00:00+00:00")
+  let config =
+    intldate.new()
+    |> intldate.with_calendar(intldate.CalendarJapanese)
+    |> intldate.with_era(intldate.EraLong)
+    |> intldate.with_year(intldate.YearNumeric)
+    |> intldate.with_month(intldate.MonthNumeric)
+    |> intldate.with_day(intldate.DayNumeric)
+
+  let heisei_result =
+    intldate.format(
+      date: heisei,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("ja-JP"),
+      config:,
+    )
+  let reiwa_result =
+    intldate.format(
+      date: reiwa,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("ja-JP"),
+      config:,
+    )
+
+  assert heisei_result == "平成31/4/30"
+  assert reiwa_result == "令和1/5/1"
+}
+
 pub fn format_with_calendar_buddhist_test() {
   let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
 

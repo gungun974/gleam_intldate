@@ -1,9 +1,14 @@
+import gleam/dict
+import gleam/int
 import gleam/option.{type Option, None, Some}
 import intldate/internal/icu/dtptngen/dtptngen.{
   type DateTimePatternGenerator, type DtRedundantEnumeration,
 }
+import intldate/internal/icu/icudata/bundle.{type Bundle}
 import intldate/internal/icu/icudata/cache
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/etf
+
+const generator_cache_prefix = "dtpg:"
 
 pub fn udatpg_match_hour_field_length() -> Int {
   dtptngen.udatpg_match_hour_field_length()
@@ -13,28 +18,23 @@ pub fn udatpg_open_memo(
   bundle: Bundle,
   locale_id: String,
 ) -> DateTimePatternGenerator {
-  let key = "dtpg\n" <> bundle.data_path <> "\n" <> locale_id
-  case cache.get(key) {
-    Ok(cached) -> udatpg_attach_chain(cached, bundle)
-    Error(_) -> {
-      let dtpg = udatpg_open(bundle, Some(locale_id))
-      let _ = cache.put(key, udatpg_detach_chain(dtpg))
-      dtpg
-    }
+  case dict.get(bundle.pattern_generators.locale_to_generator, locale_id) {
+    Error(_) -> udatpg_open(bundle, Some(locale_id))
+    Ok(generator_id) ->
+      case cache.get(generator_cache_prefix <> int.to_string(generator_id)) {
+        Ok(generator) -> generator
+        Error(_) ->
+          case dict.get(bundle.pattern_generators.generators, generator_id) {
+            Ok(encoded) ->
+              cache.put(
+                generator_cache_prefix <> int.to_string(generator_id),
+                etf.decode(encoded)
+                  |> dtptngen.dtpg_prepare_for_runtime,
+              )
+            Error(_) -> udatpg_open(bundle, Some(locale_id))
+          }
+      }
   }
-}
-
-pub fn udatpg_detach_chain(
-  dtpg: DateTimePatternGenerator,
-) -> DateTimePatternGenerator {
-  dtptngen.dtpg_detach_chain(dtpg)
-}
-
-pub fn udatpg_attach_chain(
-  dtpg: DateTimePatternGenerator,
-  bundle: Bundle,
-) -> DateTimePatternGenerator {
-  dtptngen.dtpg_attach_chain(dtpg, bundle)
 }
 
 pub fn udatpg_open(
@@ -42,8 +42,12 @@ pub fn udatpg_open(
   locale: Option(String),
 ) -> DateTimePatternGenerator {
   case locale {
-    None -> dtptngen.dtpg_create_instance(bundle, "")
-    Some(locale_id) -> dtptngen.dtpg_create_instance(bundle, locale_id)
+    None ->
+      dtptngen.dtpg_create_instance(bundle, "")
+      |> dtptngen.dtpg_prepare_for_runtime
+    Some(locale_id) ->
+      dtptngen.dtpg_create_instance(bundle, locale_id)
+      |> dtptngen.dtpg_prepare_for_runtime
   }
 }
 

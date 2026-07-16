@@ -34,8 +34,19 @@ pub type TimeZoneStyle {
   TimeZoneLongGeneric
 }
 
+pub type LocaleMatcherStyle {
+  LocaleMatcherBestFit
+  LocaleMatcherLookup
+}
+
+pub type FormatMatcherStyle {
+  FormatMatcherBestFit
+  FormatMatcherBasic
+}
+
 pub type Config {
   Config(
+    locale_matcher: LocaleMatcherStyle,
     calendar: String,
     weekday: Option(TextStyle),
     era: Option(TextStyle),
@@ -46,6 +57,7 @@ pub type Config {
     minute: Option(NumericStyle),
     second: Option(NumericStyle),
     time_zone_name: Option(TimeZoneStyle),
+    format_matcher: FormatMatcherStyle,
     hour12: Option(Bool),
   )
 }
@@ -58,19 +70,29 @@ pub type RelativeTimePart {
   RelativeTimePart(kind: String, value: String, unit: Option(String))
 }
 
+type Prepared {
+  Prepared(
+    context: icu.DateTimeContext,
+    pattern: String,
+    hour_cycle: String,
+    numbering_system: String,
+    locale: String,
+    calendar: String,
+  )
+}
+
 pub fn format(
   date: timestamp.Timestamp,
   time_zone: Option(String),
   locale: Option(String),
   config: Config,
 ) -> Result(String, icu.IcuError) {
-  use #(pattern, _, _) <- result.try(prepare(locale, config))
-  use formatted <- result.map(icu.format(
+  use prepared <- result.try(prepare(locale, config))
+  use formatted <- result.map(icu.format_resolved(
     to_milliseconds(date),
     time_zone,
-    locale |> option.unwrap(""),
-    config.calendar,
-    pattern,
+    prepared.context,
+    prepared.pattern,
   ))
   normalize_spaces(formatted)
 }
@@ -81,13 +103,12 @@ pub fn format_to_parts(
   locale: Option(String),
   config: Config,
 ) -> Result(List(DateTimePart), icu.IcuError) {
-  use #(pattern, _, _) <- result.try(prepare(locale, config))
-  use parts <- result.map(icu.format_to_parts(
+  use prepared <- result.try(prepare(locale, config))
+  use parts <- result.map(icu.format_to_parts_resolved(
     to_milliseconds(date),
     time_zone,
-    locale |> option.unwrap(""),
-    config.calendar,
-    pattern,
+    prepared.context,
+    prepared.pattern,
   ))
   list.map(parts, fn(part) {
     let #(kind, value) = part
@@ -102,14 +123,13 @@ pub fn format_range(
   locale: Option(String),
   config: Config,
 ) -> Result(String, icu.IcuError) {
-  use #(pattern, _, _) <- result.try(prepare(locale, config))
-  icu.format_range(
+  use prepared <- result.try(prepare(locale, config))
+  icu.format_range_resolved(
     to_milliseconds(date_start),
     to_milliseconds(date_end),
     time_zone,
-    locale |> option.unwrap(""),
-    config.calendar,
-    pattern,
+    prepared.context,
+    prepared.pattern,
   )
 }
 
@@ -120,14 +140,13 @@ pub fn format_range_to_parts(
   locale: Option(String),
   config: Config,
 ) -> Result(List(DateTimePart), icu.IcuError) {
-  use #(pattern, _, _) <- result.try(prepare(locale, config))
-  use parts <- result.map(icu.format_range_to_parts(
+  use prepared <- result.try(prepare(locale, config))
+  use parts <- result.map(icu.format_range_to_parts_resolved(
     to_milliseconds(date_start),
     to_milliseconds(date_end),
     time_zone,
-    locale |> option.unwrap(""),
-    config.calendar,
-    pattern,
+    prepared.context,
+    prepared.pattern,
   ))
   list.map(parts, fn(part) {
     let #(kind, value, source) = part
@@ -145,22 +164,41 @@ fn range_source(source: Option(String)) -> String {
 }
 
 pub fn resolved_options(
+  time_zone: Option(String),
   locale: Option(String),
   config: Config,
-) -> Result(#(String, String, String), icu.IcuError) {
-  prepare(locale, config)
+) -> Result(#(String, String, String, String, String, String), icu.IcuError) {
+  use prepared <- result.try(prepare(locale, config))
+  use resolved_time_zone <- result.map(icu.resolve_time_zone(time_zone))
+  #(
+    prepared.pattern,
+    prepared.hour_cycle,
+    prepared.numbering_system,
+    prepared.locale,
+    prepared.calendar,
+    resolved_time_zone,
+  )
 }
 
 fn prepare(
   locale: Option(String),
   config: Config,
-) -> Result(#(String, String, String), icu.IcuError) {
+) -> Result(Prepared, icu.IcuError) {
   let skeleton = build_skeleton(config)
-  use #(pattern, hour_cycle, region, numbering_system) <- result.map(
-    icu.analyze(locale |> option.unwrap(""), config.calendar, skeleton),
-  )
+  use analysis <- result.map(icu.analyze(
+    locale |> option.unwrap(""),
+    config.calendar,
+    skeleton,
+    map_locale_matcher(config.locale_matcher),
+    match_hour_field_length(config.format_matcher),
+  ))
   let #(adjusted, hour_cycle_keyword) =
-    adjust_pattern(pattern, skeleton, hour_cycle, region)
+    adjust_pattern(
+      analysis.pattern,
+      skeleton,
+      analysis.hour_cycle,
+      analysis.region,
+    )
   // adjust_pattern/desired_hour only produces a keyword when hour12 was
   // explicitly requested (skeleton carries a literal "h"/"H", not the
   // locale-default "j"). When hour12 was left unset but hour *was*
@@ -170,10 +208,34 @@ fn prepare(
   // final pattern for unrelated reasons (same class of issue as the
   // explicit-hour12 case already fixed; this is the "j" counterpart).
   let resolved_keyword = case hour_cycle_keyword, config.hour {
-    "", Some(_) -> hour_cycle_to_keyword(hour_cycle)
+    "", Some(_) -> hour_cycle_to_keyword(analysis.hour_cycle)
     keyword, _ -> keyword
   }
-  #(adjusted, resolved_keyword, numbering_system)
+  Prepared(
+    context: analysis.context,
+    pattern: adjusted,
+    hour_cycle: resolved_keyword,
+    numbering_system: analysis.numbering_system,
+    locale: analysis.locale,
+    calendar: analysis.calendar,
+  )
+}
+
+fn match_hour_field_length(format_matcher: FormatMatcherStyle) -> Bool {
+  // ICU's DateTimePatternGenerator is also the closest implementation of
+  // ECMA-402's basic matcher available in the bundled data. Disabling its
+  // hour-length matching changes field order and widths in ways that diverge
+  // from JavaScript's BasicFormatMatcher, so both modes retain this option.
+  case format_matcher {
+    FormatMatcherBestFit | FormatMatcherBasic -> True
+  }
+}
+
+fn map_locale_matcher(matcher: LocaleMatcherStyle) -> icu.LocaleMatcher {
+  case matcher {
+    LocaleMatcherBestFit -> icu.LocaleMatcherBestFit
+    LocaleMatcherLookup -> icu.LocaleMatcherLookup
+  }
 }
 
 fn hour_cycle_to_keyword(hour_cycle: Int) -> String {
@@ -380,6 +442,7 @@ pub fn format_relative(
   locale: Option(String),
   style: TextStyle,
   numeric: RelativeNumeric,
+  locale_matcher: LocaleMatcherStyle,
 ) -> Result(String, icu.IcuError) {
   let value = duration.to_seconds(duration) /. unit_seconds(unit)
   icu.format_relative(
@@ -388,6 +451,7 @@ pub fn format_relative(
     locale |> option.unwrap(""),
     style_name(style),
     numeric == NumericAlways,
+    map_locale_matcher(locale_matcher),
   )
 }
 
@@ -397,6 +461,7 @@ pub fn format_relative_to_parts(
   locale: Option(String),
   style: TextStyle,
   numeric: RelativeNumeric,
+  locale_matcher: LocaleMatcherStyle,
 ) -> Result(List(RelativeTimePart), icu.IcuError) {
   let value = duration.to_seconds(duration) /. unit_seconds(unit)
   use parts <- result.map(icu.format_relative_to_parts(
@@ -405,6 +470,7 @@ pub fn format_relative_to_parts(
     locale |> option.unwrap(""),
     style_name(style),
     numeric == NumericAlways,
+    map_locale_matcher(locale_matcher),
   ))
   list.map(parts, fn(part) {
     let #(kind, text) = part
@@ -413,6 +479,16 @@ pub fn format_relative_to_parts(
       _ -> RelativeTimePart(kind, text, Some(unit_name(unit)))
     }
   })
+}
+
+pub fn relative_resolved_options(
+  locale: Option(String),
+  locale_matcher: LocaleMatcherStyle,
+) -> Result(#(String, String), icu.IcuError) {
+  icu.resolve_relative_options(
+    locale |> option.unwrap(""),
+    map_locale_matcher(locale_matcher),
+  )
 }
 
 fn unit_seconds(unit: RelativeUnit) -> Float {

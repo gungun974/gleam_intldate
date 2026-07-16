@@ -3,9 +3,10 @@ import gleam/float
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/cache
+import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/icudata/resource
-import intldate/internal/icu/icudata/uresimp
 import intldate/internal/icu/locale/uloc
 import intldate/internal/icu/numfmt/decimfmt
 import intldate/internal/icu/plural/plurrule
@@ -78,6 +79,8 @@ const units_with_absolute = [
 
 const styles = ["long", "short", "narrow"]
 
+const cache_prefix = "relative-data:"
+
 fn parse_field_key(key: String) -> Option(FieldKeyParseResult) {
   let #(style, base) = case string.ends_with(key, "-narrow") {
     True -> #("narrow", string.slice(key, 0, string.length(key) - 7))
@@ -120,53 +123,6 @@ fn absolute_key(style: String, unit: String) -> String {
   style <> "|" <> unit
 }
 
-fn table_entries(table: resource.ResourceTableView) -> List(#(String, Int)) {
-  case table.get_key, table.get_res {
-    Some(get_key), Some(get_res) ->
-      table_entries_loop(get_key, get_res, 0, table.length)
-    _, _ -> []
-  }
-}
-
-fn table_entries_loop(
-  get_key: fn(Int) -> String,
-  get_res: fn(Int) -> Int,
-  i: Int,
-  length: Int,
-) -> List(#(String, Int)) {
-  case i >= length {
-    True -> []
-    False -> [
-      #(get_key(i), get_res(i)),
-      ..table_entries_loop(get_key, get_res, i + 1, length)
-    ]
-  }
-}
-
-fn resource_string_text(rd: resource.ResourceData, res: Int) -> Option(String) {
-  case
-    resource.resource_value_get_string(resource.create_resource_value(
-      Some(rd),
-      res,
-    ))
-  {
-    Some(s) -> Some(s.text)
-    None -> None
-  }
-}
-
-fn resource_alias_text(rd: resource.ResourceData, res: Int) -> Option(String) {
-  case
-    resource.resource_value_get_alias_string(resource.create_resource_value(
-      Some(rd),
-      res,
-    ))
-  {
-    Some(s) -> Some(s.text)
-    None -> None
-  }
-}
-
 fn dict_get_or(d: Dict(String, a), key: String, default: a) -> a {
   case dict.get(d, key) {
     Ok(v) -> v
@@ -178,105 +134,33 @@ fn merge_unit_table(
   state: RelativeDateTimeData,
   unit: String,
   style: String,
-  res_data: resource.ResourceData,
-  res: Int,
+  found: resource.RelativeUnitData,
 ) -> RelativeDateTimeData {
-  let sub = resource.get_table(res_data, res)
-  merge_unit_table_entries(state, unit, style, res_data, table_entries(sub))
-}
-
-fn merge_unit_table_entries(
-  state: RelativeDateTimeData,
-  unit: String,
-  style: String,
-  res_data: resource.ResourceData,
-  entries: List(#(String, Int)),
-) -> RelativeDateTimeData {
-  case entries {
-    [] -> state
-    [#(key, sub_res), ..rest] -> {
-      let item_type = uresimp.res_get_type(sub_res)
-      let state = case key == "relative" && uresimp.ures_is_table(item_type) {
-        True -> merge_relative_table(state, unit, style, res_data, sub_res)
-        False ->
-          case key == "relativeTime" && uresimp.ures_is_table(item_type) {
-            True ->
-              merge_relative_time_table(state, unit, style, res_data, sub_res)
-            False -> state
-          }
-      }
-      merge_unit_table_entries(state, unit, style, res_data, rest)
-    }
-  }
+  let state = merge_relative_table(state, unit, style, found.relative)
+  merge_relative_time_table(state, unit, style, found.past, found.future)
 }
 
 fn merge_relative_table(
   state: RelativeDateTimeData,
   unit: String,
   style: String,
-  res_data: resource.ResourceData,
-  res: Int,
+  found: Dict(String, String),
 ) -> RelativeDateTimeData {
-  let rel_table = resource.get_table(res_data, res)
   let map_key = absolute_key(style, unit)
   let dest = dict_get_or(state.absolute, map_key, dict.new())
-  let #(dest, now_entry) =
-    merge_relative_entries(dest, res_data, table_entries(rel_table), unit, None)
+  let dest = merge_missing(dest, found)
   let state =
     RelativeDateTimeData(
       ..state,
       absolute: dict.insert(state.absolute, map_key, dest),
     )
-  case now_entry {
-    None -> state
-    Some(now_value) ->
-      case dict.get(state.now, style) {
-        Ok(_) -> state
-        Error(_) ->
-          RelativeDateTimeData(
-            ..state,
-            now: dict.insert(state.now, style, now_value),
-          )
-      }
-  }
-}
-
-fn merge_relative_entries(
-  dest: Dict(String, String),
-  res_data: resource.ResourceData,
-  entries: List(#(String, Int)),
-  unit: String,
-  now_entry: Option(String),
-) -> #(Dict(String, String), Option(String)) {
-  case entries {
-    [] -> #(dest, now_entry)
-    [#(d_key, item_res), ..rest] -> {
-      let item_type = uresimp.res_get_type(item_res)
-      case item_type == uresimp.ResString || item_type == uresimp.ResStringV2 {
-        False -> merge_relative_entries(dest, res_data, rest, unit, now_entry)
-        True -> {
-          let text = resource_string_text(res_data, item_res)
-          case text {
-            None ->
-              merge_relative_entries(dest, res_data, rest, unit, now_entry)
-            Some(value) -> {
-              let already = dict.get(dest, d_key)
-              let dest = case already {
-                Ok(_) -> dest
-                Error(_) -> dict.insert(dest, d_key, value)
-              }
-              let now_entry = case
-                unit == "second" && d_key == "0" && now_entry == None
-              {
-                True -> Some(value)
-                False -> now_entry
-              }
-              merge_relative_entries(dest, res_data, rest, unit, now_entry)
-            }
-          }
-        }
-      }
-    }
+  case unit == "second", dict.get(found, "0"), dict.get(state.now, style) {
+    True, Ok(now_value), Error(_) ->
+      RelativeDateTimeData(
+        ..state,
+        now: dict.insert(state.now, style, now_value),
+      )
+    _, _, _ -> state
   }
 }
 
@@ -284,10 +168,9 @@ fn merge_relative_time_table(
   state: RelativeDateTimeData,
   unit: String,
   style: String,
-  res_data: resource.ResourceData,
-  res: Int,
+  past: Dict(String, String),
+  future: Dict(String, String),
 ) -> RelativeDateTimeData {
-  let rt_table = resource.get_table(res_data, res)
   let map_key = absolute_key(style, unit)
   let dest =
     dict_get_or(
@@ -296,79 +179,26 @@ fn merge_relative_time_table(
       RelativeTimeUnitMap(past: dict.new(), future: dict.new()),
     )
   let dest =
-    merge_relative_time_entries(dest, res_data, table_entries(rt_table))
+    RelativeTimeUnitMap(
+      past: merge_missing(dest.past, past),
+      future: merge_missing(dest.future, future),
+    )
   RelativeDateTimeData(
     ..state,
     relative_time: dict.insert(state.relative_time, map_key, dest),
   )
 }
 
-fn merge_relative_time_entries(
-  dest: RelativeTimeUnitMap,
-  res_data: resource.ResourceData,
-  entries: List(#(String, Int)),
-) -> RelativeTimeUnitMap {
-  case entries {
-    [] -> dest
-    [#(pf, pf_res), ..rest] ->
-      case pf == "past" || pf == "future" {
-        False -> merge_relative_time_entries(dest, res_data, rest)
-        True -> {
-          let cat_type = uresimp.res_get_type(pf_res)
-          case uresimp.ures_is_table(cat_type) {
-            False -> merge_relative_time_entries(dest, res_data, rest)
-            True -> {
-              let cat_table = resource.get_table(res_data, pf_res)
-              let target = case pf {
-                "past" -> dest.past
-                _ -> dest.future
-              }
-              let target =
-                merge_category_entries(
-                  target,
-                  res_data,
-                  table_entries(cat_table),
-                )
-              let dest = case pf {
-                "past" -> RelativeTimeUnitMap(..dest, past: target)
-                _ -> RelativeTimeUnitMap(..dest, future: target)
-              }
-              merge_relative_time_entries(dest, res_data, rest)
-            }
-          }
-        }
-      }
-  }
-}
-
-fn merge_category_entries(
+fn merge_missing(
   dest: Dict(String, String),
-  res_data: resource.ResourceData,
-  entries: List(#(String, Int)),
+  found: Dict(String, String),
 ) -> Dict(String, String) {
-  case entries {
-    [] -> dest
-    [#(cat, item_res), ..rest] -> {
-      let item_type = uresimp.res_get_type(item_res)
-      case item_type == uresimp.ResString || item_type == uresimp.ResStringV2 {
-        False -> merge_category_entries(dest, res_data, rest)
-        True ->
-          case dict.get(dest, cat) {
-            Ok(_) -> merge_category_entries(dest, res_data, rest)
-            Error(_) ->
-              case resource_string_text(res_data, item_res) {
-                None -> merge_category_entries(dest, res_data, rest)
-                Some(value) ->
-                  merge_category_entries(
-                    dict.insert(dest, cat, value),
-                    res_data,
-                    rest,
-                  )
-              }
-          }
-      }
+  dict.fold(found, dest, fn(acc, key, value) {
+    case dict.has_key(acc, key) {
+      True -> acc
+      False -> dict.insert(acc, key, value)
     }
-  }
+  })
 }
 
 fn empty_relative_date_time_data() -> RelativeDateTimeData {
@@ -385,95 +215,66 @@ pub fn create_relative_date_time_data(
   locale_id: String,
 ) -> RelativeDateTimeData {
   let chain =
-    resbund.open_locale_chain(bundle, uloc.get_base_name(Some(locale_id)))
-  let state = build_from_chain(bundle, chain, empty_relative_date_time_data())
+    localechain.locale_chain(
+      bundle.locale_parents,
+      uloc.get_base_name(Some(locale_id)),
+    )
+  let locales = bundle.relative_fields_by_locale.locales
+  let state = build_from_chain(locales, chain, empty_relative_date_time_data())
   fill_missing_style_fallbacks(state, styles)
 }
 
 fn build_from_chain(
-  bundle: Bundle,
-  chain: List(resbund.LocaleChainEntry),
+  locales: Dict(String, Dict(String, resource.RelativeField)),
+  chain: List(String),
   state: RelativeDateTimeData,
 ) -> RelativeDateTimeData {
   case chain {
     [] -> state
     [level, ..rest] -> {
-      let state = case level.res_data {
-        None -> state
-        Some(_) -> build_from_level(bundle, level, state)
+      let state = case dict.get(locales, level) {
+        Error(_) -> state
+        Ok(fields) -> build_from_level(fields, state)
       }
-      build_from_chain(bundle, rest, state)
+      build_from_chain(locales, rest, state)
     }
   }
 }
 
 fn build_from_level(
-  bundle: Bundle,
-  level: resbund.LocaleChainEntry,
+  fields: Dict(String, resource.RelativeField),
   state: RelativeDateTimeData,
 ) -> RelativeDateTimeData {
-  case resbund.get_by_path(bundle, [level], "fields", 0) {
-    None -> state
-    Some(found) -> {
-      let table = resource.get_table(found.res_data, found.res)
-      build_from_table_entries(state, found.res_data, table_entries(table))
-    }
-  }
-}
-
-fn build_from_table_entries(
-  state: RelativeDateTimeData,
-  res_data: resource.ResourceData,
-  entries: List(#(String, Int)),
-) -> RelativeDateTimeData {
-  case entries {
-    [] -> state
-    [#(key, res), ..rest] -> {
-      let type_ = uresimp.res_get_type(res)
-      let state = case type_ == uresimp.ResAlias {
-        True ->
-          case parse_field_key(key) {
-            None -> state
-            Some(parsed) ->
-              case resource_alias_text(res_data, res) {
-                None -> state
-                Some(alias_str) -> {
-                  let target_style = style_from_alias_target(alias_str)
-                  case dict.get(state.style_fallback, parsed.style) {
-                    Ok(_) -> state
-                    Error(_) ->
-                      RelativeDateTimeData(
-                        ..state,
-                        style_fallback: dict.insert(
-                          state.style_fallback,
-                          parsed.style,
-                          Some(target_style),
-                        ),
-                      )
-                  }
-                }
-              }
-          }
-        False ->
-          case uresimp.ures_is_table(type_) {
-            False -> state
-            True ->
-              case parse_field_key(key) {
-                None -> state
-                Some(parsed) ->
-                  merge_unit_table(
-                    state,
-                    parsed.unit,
+  dict.fold(fields, state, fn(state, key, field) {
+    let state = case field {
+      resource.RelativeFieldAliasTo(alias_str) ->
+        case parse_field_key(key) {
+          None -> state
+          Some(parsed) -> {
+            let target_style = style_from_alias_target(alias_str)
+            case dict.get(state.style_fallback, parsed.style) {
+              Ok(_) -> state
+              Error(_) ->
+                RelativeDateTimeData(
+                  ..state,
+                  style_fallback: dict.insert(
+                    state.style_fallback,
                     parsed.style,
-                    res_data,
-                    res,
-                  )
-              }
+                    Some(target_style),
+                  ),
+                )
+            }
           }
-      }
-      build_from_table_entries(state, res_data, rest)
+        }
+      resource.RelativeFieldValue(found) ->
+        case parse_field_key(key) {
+          None -> state
+          Some(parsed) ->
+            merge_unit_table(state, parsed.unit, parsed.style, found)
+        }
     }
-  }
+    state
+  })
 }
 
 fn fill_missing_style_fallbacks(
@@ -663,7 +464,13 @@ pub fn relative_date_time_data_lookup_relative_time(
 }
 
 pub fn get_data(bundle: Bundle, locale_id: String) -> RelativeDateTimeData {
-  create_relative_date_time_data(bundle, locale_id)
+  let base_name = uloc.get_base_name(Some(locale_id))
+  let key = cache_prefix <> base_name
+  case cache.get(key) {
+    Ok(data) -> data
+    Error(_) ->
+      cache.put(key, create_relative_date_time_data(bundle, base_name))
+  }
 }
 
 pub fn get_plural_rules(

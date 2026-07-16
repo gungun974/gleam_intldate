@@ -1,6 +1,6 @@
 import gleam/option.{None}
 import intldate/internal/icu/calendar/gregocal
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
 
 const taiwan_era_start = 1911
 

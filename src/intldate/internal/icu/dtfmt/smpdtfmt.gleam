@@ -9,7 +9,8 @@ import intldate/internal/icu/calendar/timezone
 import intldate/internal/icu/dtfmt/dayperiodrules
 import intldate/internal/icu/dtfmt/dtfmtsym
 import intldate/internal/icu/dtfmt/tznames
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/resource
 import intldate/internal/icu/locale/uloc
 import intldate/internal/icu/locale/zonemeta
 import intldate/internal/icu/numfmt/decimfmt
@@ -27,7 +28,7 @@ pub type HourMinuteSplit {
 pub type SubFormatContext {
   SubFormatContext(
     bundle: Bundle,
-    chain: List(resbund.LocaleChainEntry),
+    chain: List(bundle.LocaleChainEntry),
     locale_id: String,
     cal_type: String,
     fields: CalendarFields,
@@ -36,7 +37,7 @@ pub type SubFormatContext {
     canonical_tzid: Option(String),
     tzid: String,
     epoch_millis: Int,
-    digits: String,
+    digits: decimfmt.Digits,
     gannen_year_numbering: Bool,
     has_date_anchor_field: Bool,
     has_minute: Bool,
@@ -66,9 +67,9 @@ pub type DateFormatter {
     cal_type: String,
     tz: String,
     pattern: String,
-    chain: List(resbund.LocaleChainEntry),
+    chain: List(bundle.LocaleChainEntry),
     canonical_tzid: Option(String),
-    digits: String,
+    digits: decimfmt.Digits,
     gannen_year_numbering: Bool,
     has_date_anchor_field: Bool,
     has_minute: Bool,
@@ -81,10 +82,8 @@ pub type FormatForFieldsResult {
   FormatForFieldsResult(formatted: String, parts: List(RenderedFormatPart))
 }
 
-fn zonemeta_bundle(bundle: Bundle) -> zonemeta.Bundle {
-  zonemeta.Bundle(data_path: bundle.data_path, open_direct: fn(name) {
-    resbund.open_direct_or_panic(bundle, name)
-  })
+fn zonemeta_bundle(bundle: Bundle) -> Bundle {
+  bundle
 }
 
 fn code_points(s: String) -> List(String) {
@@ -157,7 +156,7 @@ fn zero_pad(
   value: Int,
   min_digits: Int,
   max_digits: Int,
-  digits: String,
+  digits: decimfmt.Digits,
 ) -> String {
   let modulus = math.pow10(max_digits)
   let v = proper_mod(value, modulus)
@@ -167,7 +166,7 @@ fn zero_pad(
     True -> "-" <> s
     False -> s
   }
-  case digits == "" {
+  case decimfmt.digits_are_ascii(digits) {
     True -> signed
     False -> decimfmt.localize_digits(signed, digits)
   }
@@ -177,7 +176,7 @@ fn zero_padding_number(
   value: Int,
   min_digits: Int,
   max_digits: Int,
-  digits: String,
+  digits: decimfmt.Digits,
 ) -> String {
   zero_pad(value, min_digits, max_digits, digits)
 }
@@ -304,12 +303,12 @@ fn get_related_year(cal_type: String, extended_year: Int) -> Int {
   }
 }
 
-fn pad2(n: Int, digits: String) -> String {
+fn pad2(n: Int, digits: decimfmt.Digits) -> String {
   let s = case n < 10 {
     True -> "0" <> int.to_string(n)
     False -> int.to_string(n)
   }
-  case digits == "" {
+  case decimfmt.digits_are_ascii(digits) {
     True -> s
     False -> decimfmt.localize_digits(s, digits)
   }
@@ -406,7 +405,7 @@ fn build_offset_fields(
         False -> ""
       }
       prefix
-      <> pad2(field_at(fields, idx), "")
+      <> string.pad_start(int.to_string(field_at(fields, idx)), 2, "0")
       <> build_offset_fields(fields, idx + 1, last_idx, sep)
     }
   }
@@ -465,10 +464,11 @@ fn find_zone_strings_chain(
 }
 
 fn get_zone_strings_table(
+  bundle: Bundle,
   zone_chain: List(tznames.ZoneChainEntry),
   key: String,
 ) -> Option(String) {
-  tznames.get_zone_strings_global(zone_chain, key)
+  tznames.get_zone_strings_global(bundle, zone_chain, key)
 }
 
 fn format_offset_localized_gmt(
@@ -476,14 +476,18 @@ fn format_offset_localized_gmt(
   locale_id: String,
   offset_millis: Int,
   is_short: Bool,
-  digits: String,
+  digits: decimfmt.Digits,
 ) -> String {
   let zone_chain = find_zone_strings_chain(bundle, locale_id)
-  let gmt_format = case get_zone_strings_table(zone_chain, "gmtFormat") {
+  let gmt_format = case
+    get_zone_strings_table(bundle, zone_chain, "gmtFormat")
+  {
     Some(f) -> f
     None -> "GMT{0}"
   }
-  let hour_format = case get_zone_strings_table(zone_chain, "hourFormat") {
+  let hour_format = case
+    get_zone_strings_table(bundle, zone_chain, "hourFormat")
+  {
     Some(f) -> f
     None -> "+HH:mm;-HH:mm"
   }
@@ -908,23 +912,23 @@ fn sub_format_day_period_flexible(
 }
 
 fn day_period_for_hour_name(
-  rule_set: dayperiodrules.DayPeriodRules,
+  rule_set: resource.DayPeriodRules,
   hour_of_day: Int,
 ) -> String {
   case dayperiodrules.get_day_period_for_hour(rule_set, hour_of_day) {
-    dayperiodrules.Midnight -> "midnight"
-    dayperiodrules.Noon -> "noon"
-    dayperiodrules.Morning1 -> "morning1"
-    dayperiodrules.Afternoon1 -> "afternoon1"
-    dayperiodrules.Evening1 -> "evening1"
-    dayperiodrules.Night1 -> "night1"
-    dayperiodrules.Morning2 -> "morning2"
-    dayperiodrules.Afternoon2 -> "afternoon2"
-    dayperiodrules.Evening2 -> "evening2"
-    dayperiodrules.Night2 -> "night2"
-    dayperiodrules.Am -> "am"
-    dayperiodrules.Pm -> "pm"
-    dayperiodrules.DayPeriodUnknown -> "am"
+    resource.Midnight -> "midnight"
+    resource.Noon -> "noon"
+    resource.Morning1 -> "morning1"
+    resource.Afternoon1 -> "afternoon1"
+    resource.Evening1 -> "evening1"
+    resource.Night1 -> "night1"
+    resource.Morning2 -> "morning2"
+    resource.Afternoon2 -> "afternoon2"
+    resource.Evening2 -> "evening2"
+    resource.Night2 -> "night2"
+    resource.Am -> "am"
+    resource.Pm -> "pm"
+    resource.DayPeriodUnknown -> "am"
   }
 }
 
@@ -962,7 +966,7 @@ fn sub_format_hour_field(
       }
       let ms_text = string.slice(ms_text, 0, take)
       let ms_text = string.pad_end(ms_text, count, "0")
-      case ctx.digits == "" {
+      case decimfmt.digits_are_ascii(ctx.digits) {
         True -> ms_text
         False -> decimfmt.localize_digits(ms_text, ctx.digits)
       }
@@ -994,7 +998,7 @@ fn sub_format_zone(
   canonical_tzid: Option(String),
   epoch_millis: Int,
   tzid: String,
-  digits: String,
+  digits: decimfmt.Digits,
 ) -> String {
   let offset = raw_offset + dst_offset
   case ch {
@@ -1135,10 +1139,12 @@ fn sub_format_zone(
             2 -> tzid
             3 -> {
               let zone_chain = tznames.get_zone_strings_chain(bundle, locale_id)
-              case tznames.get_exemplar_city(zone_chain, cid) {
+              case tznames.get_exemplar_city(bundle, zone_chain, cid) {
                 Some(city) -> city
                 None ->
-                  case tznames.get_exemplar_city(zone_chain, "Etc/Unknown") {
+                  case
+                    tznames.get_exemplar_city(bundle, zone_chain, "Etc/Unknown")
+                  {
                     Some(city) -> city
                     None -> "Unknown"
                   }
@@ -1400,7 +1406,7 @@ pub fn udat_open(
   pattern: String,
 ) -> DateFormatter {
   let base_name = uloc.get_base_name(Some(locale_id))
-  let chain = resbund.open_locale_chain(bundle, base_name)
+  let chain = bundle.open_locale_chain(bundle, base_name)
   let canonical_tzid = case tz == "" {
     True -> None
     False -> {

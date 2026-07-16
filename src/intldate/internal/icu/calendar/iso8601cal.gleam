@@ -1,6 +1,6 @@
 import gleam/option.{Some}
 import intldate/internal/icu/calendar/gregocal
-import intldate/internal/icu/icudata/resbund.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle}
 import intldate/internal/icu/locale/uloc
 
 const ucal_monday = 2
