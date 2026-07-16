@@ -1,12 +1,22 @@
+@target(erlang)
 import gleam/bit_array
+@target(erlang)
 import gleam/crypto
+@target(erlang)
 import gleam/http/request
+@target(erlang)
 import gleam/httpc
+@target(erlang)
 import gleam/list
+@target(erlang)
 import gleam/result
+@target(erlang)
 import gleam/string
+@target(erlang)
 import intldate_generate/log
+@target(erlang)
 import simplifile
+@target(erlang)
 import star
 
 type Source {
