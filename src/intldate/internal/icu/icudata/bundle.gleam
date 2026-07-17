@@ -69,11 +69,11 @@ type LocaleMaps {
 // The global generated data is immutable at runtime. Locale data is cached
 // separately so a process using fr_FR only retains fr_FR, fr and root.
 pub fn create_bundle() -> Result(Bundle, loader.LoadError) {
-  case cache.get(cache_key) {
+  case cache.get_persistent_term(cache_key) {
     Ok(bundle) -> Ok(bundle)
     Error(_) -> {
       use bundle <- result.try(create_uncached_bundle())
-      Ok(cache.put(cache_key, bundle))
+      Ok(cache.put_persistent_term(cache_key, bundle))
     }
   }
 }
@@ -227,18 +227,18 @@ fn locale_base(name: String) -> String {
 }
 
 /// Attach only the exact locale and its ICU fallback chain to a global bundle.
-/// Each exact locale shard has its own append-only persistent_term entry.
+/// Each exact locale shard has its own append-only ets entry.
 pub fn for_locale(
   bundle: Bundle,
   name: String,
 ) -> Result(Bundle, loader.LoadError) {
   let base_name = locale_base(name)
   let key = locale_cache_prefix <> base_name
-  use maps <- result.try(case cache.get(key) {
+  use maps <- result.try(case cache.get_ets(key) {
     Ok(maps) -> Ok(maps)
     Error(_) -> {
       use maps <- result.try(load_locale_maps(bundle, base_name))
-      Ok(cache.put(key, maps))
+      Ok(cache.put_ets(key, maps))
     }
   })
 

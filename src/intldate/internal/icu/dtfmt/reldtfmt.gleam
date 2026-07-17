@@ -466,10 +466,10 @@ pub fn relative_date_time_data_lookup_relative_time(
 pub fn get_data(bundle: Bundle, locale_id: String) -> RelativeDateTimeData {
   let base_name = uloc.get_base_name(Some(locale_id))
   let key = cache_prefix <> base_name
-  case cache.get(key) {
+  case cache.get_ets(key) {
     Ok(data) -> data
     Error(_) ->
-      cache.put(key, create_relative_date_time_data(bundle, base_name))
+      cache.put_ets(key, create_relative_date_time_data(bundle, base_name))
   }
 }
 

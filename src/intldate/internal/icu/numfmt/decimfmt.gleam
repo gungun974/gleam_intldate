@@ -295,10 +295,10 @@ fn resolve_ns_data(
 ) -> ResolvedNsData {
   let base_name = uloc.get_base_name(Some(locale_id))
   let key = "decimal-symbols:" <> base_name <> "@" <> ns_name
-  case cache.get(key) {
+  case cache.get_ets(key) {
     Ok(data) -> data
     Error(_) ->
-      cache.put(key, resolve_ns_data_uncached(bundle, base_name, ns_name))
+      cache.put_ets(key, resolve_ns_data_uncached(bundle, base_name, ns_name))
   }
 }
 
@@ -343,10 +343,13 @@ pub fn load_locale_data(bundle: Bundle, locale_id: String) -> LocaleData {
   let ns = numsys.create_instance_for_locale(bundle, locale_id)
   let ns_name = selected_numbering_system_name(ns)
   let key = "decimal-locale-data:" <> base_name <> "@" <> ns_name
-  case cache.get(key) {
+  case cache.get_ets(key) {
     Ok(data) -> data
     Error(_) ->
-      cache.put(key, load_locale_data_uncached(bundle, base_name, ns_name, ns))
+      cache.put_ets(
+        key,
+        load_locale_data_uncached(bundle, base_name, ns_name, ns),
+      )
   }
 }
 

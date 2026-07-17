@@ -20,14 +20,16 @@ pub fn udatpg_open_memo(
   case dict.get(bundle.pattern_generators.locale_to_generator, locale_id) {
     Error(_) -> udatpg_open(bundle, Some(locale_id))
     Ok(generator_id) ->
-      case cache.get(generator_cache_prefix <> int.to_string(generator_id)) {
+      case
+        cache.get_ets(generator_cache_prefix <> int.to_string(generator_id))
+      {
         Ok(generator) -> generator
         Error(_) ->
           case dict.get(bundle.pattern_generators.generators, generator_id) {
             Ok(encoded) ->
               case dtptngen.dtpg_decode(encoded) {
                 Ok(generator) ->
-                  cache.put(
+                  cache.put_ets(
                     generator_cache_prefix <> int.to_string(generator_id),
                     dtptngen.dtpg_prepare_for_runtime(generator),
                   )

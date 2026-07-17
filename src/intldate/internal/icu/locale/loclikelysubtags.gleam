@@ -633,11 +633,11 @@ pub fn get_distance_data(state: LikelySubtagsState) -> DistanceData {
 pub fn create_likely_subtags(
   bundle: Bundle,
 ) -> Result(LikelySubtagsState, String) {
-  case cache.get(cache_key) {
+  case cache.get_persistent_term(cache_key) {
     Ok(state) -> Ok(state)
     Error(_) -> {
       use state <- result.try(create_likely_subtags_uncached(bundle))
-      Ok(cache.put(cache_key, state))
+      Ok(cache.put_persistent_term(cache_key, state))
     }
   }
 }

@@ -279,10 +279,10 @@ pub fn create_date_interval_info(
 ) -> DateIntervalInfo {
   let base_name = uloc.get_base_name(Some(locale_id))
   let key = cache_prefix <> base_name <> "@" <> cal_type
-  case cache.get(key) {
+  case cache.get_ets(key) {
     Ok(info) -> info
     Error(_) ->
-      cache.put(
+      cache.put_ets(
         key,
         create_uncached_date_interval_info(bundle, locale_id, cal_type),
       )
