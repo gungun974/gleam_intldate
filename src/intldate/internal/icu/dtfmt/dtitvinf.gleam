@@ -2,7 +2,9 @@ import gleam/dict.{type Dict}
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{
+  type Bundle, scoped_date_interval_data,
+}
 import intldate/internal/icu/icudata/cache
 import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/icudata/resource
@@ -191,7 +193,7 @@ pub fn build_date_interval_info_state(
       bundle.locale_parents,
       uloc.get_base_name(Some(locale_id)),
     )
-  let locales = bundle.date_interval_data_by_locale.locales
+  let locales = scoped_date_interval_data(bundle).locales
 
   let initial =
     DateIntervalInfoState(

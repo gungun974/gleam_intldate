@@ -35,6 +35,36 @@ pub type Bundle {
     calendar_symbols_by_locale: resource.CalendarSymbolsByLocale,
     date_interval_data_by_locale: resource.DateIntervalDataByLocale,
     relative_fields_by_locale: resource.RelativeFieldsByLocale,
+    scoped_locale: String,
+  )
+}
+
+type CoreMaps {
+  CoreMaps(
+    number_elements: dict.Dict(String, dict.Dict(String, String)),
+    number_system_data: dict.Dict(
+      String,
+      dict.Dict(String, resource.NumberSystemSymbols),
+    ),
+    region_names: dict.Dict(String, dict.Dict(String, String)),
+    calendar_symbols: dict.Dict(
+      String,
+      dict.Dict(String, resource.CalendarSymbols),
+    ),
+  )
+}
+
+type ColdMaps {
+  ColdMaps(
+    zone_strings: dict.Dict(String, resource.ZoneStringsLocale),
+    date_interval_data: dict.Dict(
+      String,
+      dict.Dict(String, resource.DateIntervalCalendarData),
+    ),
+    relative_fields: dict.Dict(
+      String,
+      dict.Dict(String, resource.RelativeField),
+    ),
   )
 }
 
@@ -129,6 +159,7 @@ pub fn create_generation_bundle(
     calendar_symbols_by_locale:,
     date_interval_data_by_locale:,
     relative_fields_by_locale:,
+    scoped_locale: "",
   )
 }
 
@@ -169,6 +200,7 @@ fn create_global_bundle(
     calendar_symbols_by_locale: resource.CalendarSymbolsByLocale(dict.new()),
     date_interval_data_by_locale: resource.DateIntervalDataByLocale(dict.new()),
     relative_fields_by_locale: resource.RelativeFieldsByLocale(dict.new()),
+    scoped_locale: "",
   ))
 }
 
@@ -233,37 +265,115 @@ pub fn for_locale(
   name: String,
 ) -> Result(Bundle, loader.LoadError) {
   let base_name = locale_base(name)
-  let key = locale_cache_prefix <> base_name
-  use maps <- result.try(case cache.get_ets(key) {
-    Ok(maps) -> Ok(maps)
-    Error(_) -> {
-      use maps <- result.try(load_locale_maps(bundle, base_name))
-      Ok(cache.put_ets(key, maps))
-    }
-  })
+  use core <- result.try(load_core(bundle, base_name))
 
   Ok(
     Bundle(
       ..bundle,
       number_elements_by_locale: resource.NumberElementsByLocale(
-        maps.number_elements,
+        core.number_elements,
       ),
       number_system_data_by_locale: resource.NumberSystemDataByLocale(
-        maps.number_system_data,
+        core.number_system_data,
       ),
-      zone_strings_by_locale: resource.ZoneStringsByLocale(maps.zone_strings),
-      region_names_by_locale: resource.RegionNamesByLocale(maps.region_names),
+      region_names_by_locale: resource.RegionNamesByLocale(core.region_names),
       calendar_symbols_by_locale: resource.CalendarSymbolsByLocale(
-        maps.calendar_symbols,
+        core.calendar_symbols,
       ),
+      zone_strings_by_locale: resource.ZoneStringsByLocale(dict.new()),
       date_interval_data_by_locale: resource.DateIntervalDataByLocale(
-        maps.date_interval_data,
+        dict.new(),
       ),
-      relative_fields_by_locale: resource.RelativeFieldsByLocale(
-        maps.relative_fields,
-      ),
+      relative_fields_by_locale: resource.RelativeFieldsByLocale(dict.new()),
+      scoped_locale: base_name,
     ),
   )
+}
+
+fn core_key(base_name: String) -> String {
+  locale_cache_prefix <> base_name
+}
+
+fn cold_key(base_name: String) -> String {
+  locale_cache_prefix <> base_name <> ":cold"
+}
+
+fn split_maps(maps: LocaleMaps) -> #(CoreMaps, ColdMaps) {
+  #(
+    CoreMaps(
+      number_elements: maps.number_elements,
+      number_system_data: maps.number_system_data,
+      region_names: maps.region_names,
+      calendar_symbols: maps.calendar_symbols,
+    ),
+    ColdMaps(
+      zone_strings: maps.zone_strings,
+      date_interval_data: maps.date_interval_data,
+      relative_fields: maps.relative_fields,
+    ),
+  )
+}
+
+fn load_core(
+  bundle: Bundle,
+  base_name: String,
+) -> Result(CoreMaps, loader.LoadError) {
+  case cache.get_ets(core_key(base_name)) {
+    Ok(core) -> Ok(core)
+    Error(_) -> {
+      use maps <- result.try(load_locale_maps(bundle, base_name))
+      let #(core, cold) = split_maps(maps)
+      let _ = cache.put_ets(cold_key(base_name), cold)
+      Ok(cache.put_ets(core_key(base_name), core))
+    }
+  }
+}
+
+fn load_cold(bundle: Bundle, base_name: String) -> ColdMaps {
+  case cache.get_ets(cold_key(base_name)) {
+    Ok(cold) -> cold
+    Error(_) ->
+      case load_locale_maps(bundle, base_name) {
+        Ok(maps) -> {
+          let #(core, cold) = split_maps(maps)
+          let _ = cache.put_ets(core_key(base_name), core)
+          cache.put_ets(cold_key(base_name), cold)
+        }
+        Error(_) -> ColdMaps(dict.new(), dict.new(), dict.new())
+      }
+  }
+}
+
+pub fn scoped_zone_strings(bundle: Bundle) -> resource.ZoneStringsByLocale {
+  case bundle.scoped_locale {
+    "" -> bundle.zone_strings_by_locale
+    base_name ->
+      resource.ZoneStringsByLocale(load_cold(bundle, base_name).zone_strings)
+  }
+}
+
+pub fn scoped_date_interval_data(
+  bundle: Bundle,
+) -> resource.DateIntervalDataByLocale {
+  case bundle.scoped_locale {
+    "" -> bundle.date_interval_data_by_locale
+    base_name ->
+      resource.DateIntervalDataByLocale(
+        load_cold(bundle, base_name).date_interval_data,
+      )
+  }
+}
+
+pub fn scoped_relative_fields(
+  bundle: Bundle,
+) -> resource.RelativeFieldsByLocale {
+  case bundle.scoped_locale {
+    "" -> bundle.relative_fields_by_locale
+    base_name ->
+      resource.RelativeFieldsByLocale(
+        load_cold(bundle, base_name).relative_fields,
+      )
+  }
 }
 
 fn load_locale_maps(

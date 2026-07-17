@@ -3,7 +3,7 @@ import gleam/float
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle, scoped_relative_fields}
 import intldate/internal/icu/icudata/cache
 import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/icudata/resource
@@ -219,7 +219,7 @@ pub fn create_relative_date_time_data(
       bundle.locale_parents,
       uloc.get_base_name(Some(locale_id)),
     )
-  let locales = bundle.relative_fields_by_locale.locales
+  let locales = scoped_relative_fields(bundle).locales
   let state = build_from_chain(locales, chain, empty_relative_date_time_data())
   fill_missing_style_fallbacks(state, styles)
 }

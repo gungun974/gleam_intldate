@@ -10,6 +10,7 @@ import intldate/internal/icu/dtfmt/reldtfmt
 import intldate/internal/icu/dtfmt/smpdtfmt
 import intldate/internal/icu/dtptngen/udatpg
 import intldate/internal/icu/icudata/bundle
+import intldate/internal/icu/icudata/cache
 import intldate/internal/icu/icudata/loader
 import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/locale/localematcher
@@ -339,6 +340,65 @@ pub fn analyze(
 ) -> Result(DateTimeAnalysis, IcuError) {
   use context <- result.try(resolve_date_time_context(locale, calendar, matcher))
 
+  let resolved =
+    resolve_analysis(context, calendar, skeleton, match_hour_field_length)
+
+  Ok(DateTimeAnalysis(
+    context:,
+    pattern: resolved.pattern,
+    hour_cycle: resolved.hour_cycle,
+    region: resolved.region,
+    numbering_system: resolved.numbering_system,
+    locale: resolved.locale,
+    calendar: resolved.calendar,
+  ))
+}
+
+type ResolvedAnalysis {
+  ResolvedAnalysis(
+    pattern: String,
+    hour_cycle: Int,
+    region: String,
+    numbering_system: String,
+    locale: String,
+    calendar: String,
+  )
+}
+
+fn resolve_analysis(
+  context: DateTimeContext,
+  calendar: String,
+  skeleton: String,
+  match_hour_field_length: Bool,
+) -> ResolvedAnalysis {
+  let key =
+    "analysis:"
+    <> context.locale_id
+    <> "@"
+    <> calendar
+    <> "@"
+    <> skeleton
+    <> "@"
+    <> case match_hour_field_length {
+      True -> "1"
+      False -> "0"
+    }
+  case cache.get_ets(key) {
+    Ok(resolved) -> resolved
+    Error(_) ->
+      cache.put_ets(
+        key,
+        compute_analysis(context, calendar, skeleton, match_hour_field_length),
+      )
+  }
+}
+
+fn compute_analysis(
+  context: DateTimeContext,
+  calendar: String,
+  skeleton: String,
+  match_hour_field_length: Bool,
+) -> ResolvedAnalysis {
   let dtpg = udatpg.udatpg_open_memo(context.bundle, context.locale_id)
   let default_hour_cycle = case udatpg.udatpg_get_default_hour_cycle(dtpg) {
     Ok(value) -> value
@@ -382,15 +442,14 @@ pub fn analyze(
       context.locale_id,
     ))
 
-  Ok(DateTimeAnalysis(
-    context:,
+  ResolvedAnalysis(
     pattern:,
     hour_cycle: default_hour_cycle,
     region:,
     numbering_system:,
     locale: resolved_locale,
     calendar: resolved_calendar,
-  ))
+  )
 }
 
 fn resolved_calendar_name(calendar: String) -> String {

@@ -3,7 +3,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import intldate/internal/icu/calendar/timezone
-import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{type Bundle, scoped_zone_strings}
 import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/icudata/resource.{type MetazoneMapping}
 import intldate/internal/icu/locale/loclikelysubtags
@@ -162,7 +162,7 @@ pub fn get_zone_name(
   tzid: String,
   name_key: String,
 ) -> Option(String) {
-  let data = bundle.zone_strings_by_locale
+  let data = scoped_zone_strings(bundle)
   find_zone_strings_entry(
     data.locales,
     zone_chain,
@@ -178,7 +178,7 @@ pub fn get_metazone_name(
   mzid: String,
   name_key: String,
 ) -> Option(String) {
-  let data = bundle.zone_strings_by_locale
+  let data = scoped_zone_strings(bundle)
   find_zone_strings_entry(
     data.locales,
     zone_chain,
@@ -193,7 +193,7 @@ pub fn get_zone_strings_global(
   zone_chain: List(ZoneChainEntry),
   key: String,
 ) -> Option(String) {
-  let data = bundle.zone_strings_by_locale
+  let data = scoped_zone_strings(bundle)
   find_zone_strings_global(data.locales, zone_chain, key)
 }
 

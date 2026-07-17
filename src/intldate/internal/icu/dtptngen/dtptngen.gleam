@@ -6,7 +6,9 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
-import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{
+  type Bundle, scoped_date_interval_data, scoped_relative_fields,
+}
 import intldate/internal/icu/icudata/loader
 import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/icudata/resource
@@ -1902,7 +1904,7 @@ fn dtpg_add_icu_patterns(
   case dtpg.bundle, dtpg.chain {
     Some(bundle), Some(chain) -> {
       let cal_type = dtpg_get_calendar_type_to_use(dtpg)
-      let locales = bundle.date_interval_data_by_locale.locales
+      let locales = scoped_date_interval_data(bundle).locales
       case
         find_calendar_field(
           locales,
@@ -2001,7 +2003,7 @@ fn dtpg_add_cldr_data_append_items(
 ) -> DateTimePatternGenerator {
   case dtpg.bundle, dtpg.chain {
     Some(bundle), Some(chain) -> {
-      let locales = bundle.date_interval_data_by_locale.locales
+      let locales = scoped_date_interval_data(bundle).locales
       let items =
         merge_calendar_field(locales, chain, cal_type, fn(data) {
           data.append_items
@@ -2056,7 +2058,7 @@ fn dtpg_add_cldr_data_field_names(
 ) -> DateTimePatternGenerator {
   case dtpg.bundle, dtpg.chain {
     Some(bundle), Some(chain) -> {
-      let locales = bundle.relative_fields_by_locale.locales
+      let locales = scoped_relative_fields(bundle).locales
       let dtpg =
         list.fold(chain, dtpg, fn(dtpg, locale) {
           case dict.get(locales, locale) {
@@ -2152,7 +2154,7 @@ fn dtpg_add_cldr_data_available_formats(
 ) -> DateTimePatternGenerator {
   case dtpg.bundle, dtpg.chain {
     Some(bundle), Some(chain) -> {
-      let locales = bundle.date_interval_data_by_locale.locales
+      let locales = scoped_date_interval_data(bundle).locales
       let formats =
         merge_calendar_field(locales, chain, cal_type, fn(data) {
           data.available_formats
@@ -2198,7 +2200,7 @@ fn dtpg_set_date_time_from_calendar(
   case dtpg.bundle, dtpg.chain {
     Some(bundle), Some(chain) -> {
       let cal_type = dtpg_get_calendar_type_to_use(dtpg)
-      let locales = bundle.date_interval_data_by_locale.locales
+      let locales = scoped_date_interval_data(bundle).locales
       let at_time =
         find_date_time_patterns(locales, chain, cal_type, fn(data) {
           data.date_time_patterns_at_time

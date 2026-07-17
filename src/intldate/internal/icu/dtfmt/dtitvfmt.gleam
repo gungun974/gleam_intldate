@@ -9,7 +9,9 @@ import intldate/internal/icu/calendar/timezone
 import intldate/internal/icu/dtfmt/dtitvinf.{type DateIntervalInfo}
 import intldate/internal/icu/dtfmt/smpdtfmt
 import intldate/internal/icu/dtptngen/udatpg
-import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/bundle.{
+  type Bundle, scoped_date_interval_data,
+}
 import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/icudata/resource
 import intldate/internal/icu/locale/uloc
@@ -1979,7 +1981,7 @@ pub fn initialize_pattern(fmt: DateIntervalFormat) -> DateIntervalFormat {
           fmt.bundle.locale_parents,
           uloc.get_base_name(Some(fmt.locale_id)),
         )
-      let locales = fmt.bundle.date_interval_data_by_locale.locales
+      let locales = scoped_date_interval_data(fmt.bundle).locales
       case
         find_date_time_combining_pattern(locales, chain, chain, "gregorian", 0)
       {
