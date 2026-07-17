@@ -94,6 +94,11 @@ fn load_uncached(_id: String) -> Result(dynamic.Dynamic, String) {
   panic as "unsupported Target"
 }
 
+@external(erlang, "intldate_loader_ffi", "decode_etf")
+pub fn decode_etf(_data: BitArray) -> Result(dynamic.Dynamic, String) {
+  panic as "unsupported Target"
+}
+
 @external(erlang, "intldate_loader_ffi", "constructor_name")
 fn constructor_name(_value: dynamic.Dynamic) -> Result(String, Nil) {
   panic as "unsupported Target"

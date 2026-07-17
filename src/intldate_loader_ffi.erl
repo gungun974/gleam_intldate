@@ -1,5 +1,5 @@
 -module(intldate_loader_ffi).
--export([load/1, cache_get/1, cache_put/2, decode/1, constructor_name/1]).
+-export([load/1, cache_get/1, cache_put/2, decode_etf/1, constructor_name/1]).
 
 -define(MISS, '$intldate_loader_cache_miss').
 
@@ -13,8 +13,12 @@ cache_put(Key, Value) ->
     persistent_term:put({?MODULE, Key}, Value),
     Value.
 
-decode(Bin) ->
-    binary_to_term(Bin).
+decode_etf(Bin) ->
+    try
+        {ok, binary_to_term(Bin, [safe])}
+    catch
+        error:badarg -> {error, <<"invalid ETF data">>}
+    end.
 
 load(Id) ->
     Path = path(Id),

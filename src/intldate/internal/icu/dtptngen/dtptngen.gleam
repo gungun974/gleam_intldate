@@ -1,9 +1,13 @@
 import gleam/dict.{type Dict}
+import gleam/dynamic.{type Dynamic}
+import gleam/dynamic/decode
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import intldate/internal/icu/icudata/bundle.{type Bundle}
+import intldate/internal/icu/icudata/loader
 import intldate/internal/icu/icudata/localechain
 import intldate/internal/icu/icudata/resource
 import intldate/internal/icu/locale/loclikelysubtags
@@ -2480,6 +2484,258 @@ pub fn dtpg_prepare_for_runtime(
     ..dtpg,
     pattern_map: finalize_pattern_map(dtpg.pattern_map),
   )
+}
+
+@external(erlang, "intldate_loader_ffi", "constructor_name")
+fn constructor_name(_value: Dynamic) -> Result(String, Nil) {
+  panic as "unsupported Target"
+}
+
+pub fn dtpg_decode(data: BitArray) -> Result(DateTimePatternGenerator, String) {
+  use value <- result.try(loader.decode_etf(data))
+  decode.run(value, date_time_pattern_generator_decoder())
+  |> result.map_error(fn(_) { "invalid pattern generator data" })
+}
+
+fn option_decoder(inner: decode.Decoder(a)) -> decode.Decoder(Option(a)) {
+  use value <- decode.then(decode.dynamic)
+  case constructor_name(value) {
+    Ok("none") -> decode.success(None)
+    Ok("some") -> {
+      use value <- decode.field(1, inner)
+      decode.success(Some(value))
+    }
+    _ -> decode.failure(None, "Option")
+  }
+}
+
+fn none_bundle_decoder() -> decode.Decoder(Option(Bundle)) {
+  use value <- decode.then(decode.dynamic)
+  case constructor_name(value) {
+    Ok("none") -> decode.success(None)
+    _ -> decode.failure(None, "Bundle")
+  }
+}
+
+fn field_types_decoder() -> decode.Decoder(FieldTypes) {
+  let fallback = field_types_of(dict.new())
+  let decoder = {
+    use era <- decode.field(1, decode.int)
+    use year <- decode.field(2, decode.int)
+    use quarter <- decode.field(3, decode.int)
+    use month <- decode.field(4, decode.int)
+    use week_of_year <- decode.field(5, decode.int)
+    use week_of_month <- decode.field(6, decode.int)
+    use weekday <- decode.field(7, decode.int)
+    use day_of_year <- decode.field(8, decode.int)
+    use day_of_week_in_month <- decode.field(9, decode.int)
+    use day <- decode.field(10, decode.int)
+    use dayperiod <- decode.field(11, decode.int)
+    use hour <- decode.field(12, decode.int)
+    use minute <- decode.field(13, decode.int)
+    use second <- decode.field(14, decode.int)
+    use fractional_second <- decode.field(15, decode.int)
+    use zone <- decode.field(16, decode.int)
+    decode.success(FieldTypes(
+      era:,
+      year:,
+      quarter:,
+      month:,
+      week_of_year:,
+      week_of_month:,
+      weekday:,
+      day_of_year:,
+      day_of_week_in_month:,
+      day:,
+      dayperiod:,
+      hour:,
+      minute:,
+      second:,
+      fractional_second:,
+      zone:,
+    ))
+  }
+  use value <- decode.then(decode.dynamic)
+  case constructor_name(value) {
+    Ok("field_types") -> decoder
+    _ -> decode.failure(fallback, "FieldTypes")
+  }
+}
+
+fn skeleton_fields_decoder() -> decode.Decoder(SkeletonFields) {
+  let fallback = create_skeleton_fields()
+  let decoder = {
+    use chars <- decode.field(1, decode.dict(decode.int, decode.string))
+    use lengths <- decode.field(2, decode.dict(decode.int, decode.int))
+    decode.success(SkeletonFields(chars:, lengths:))
+  }
+  use value <- decode.then(decode.dynamic)
+  case constructor_name(value) {
+    Ok("skeleton_fields") -> decoder
+    _ -> decode.failure(fallback, "SkeletonFields")
+  }
+}
+
+fn ptn_skeleton_decoder() -> decode.Decoder(PtnSkeleton) {
+  let fallback = create_ptn_skeleton()
+  let decoder = {
+    use type_ <- decode.field(1, decode.dict(decode.int, decode.int))
+    use type_vector <- decode.field(2, field_types_decoder())
+    use original <- decode.field(3, skeleton_fields_decoder())
+    use base_original <- decode.field(4, skeleton_fields_decoder())
+    use added_default_day_period <- decode.field(5, decode.bool)
+    decode.success(PtnSkeleton(
+      type_:,
+      type_vector:,
+      original:,
+      base_original:,
+      added_default_day_period:,
+    ))
+  }
+  use value <- decode.then(decode.dynamic)
+  case constructor_name(value) {
+    Ok("ptn_skeleton") -> decoder
+    _ -> decode.failure(fallback, "PtnSkeleton")
+  }
+}
+
+fn distance_info_decoder() -> decode.Decoder(DistanceInfo) {
+  let fallback = create_distance_info()
+  let decoder = {
+    use missing_field_mask <- decode.field(1, decode.int)
+    use extra_field_mask <- decode.field(2, decode.int)
+    decode.success(DistanceInfo(missing_field_mask:, extra_field_mask:))
+  }
+  use value <- decode.then(decode.dynamic)
+  case constructor_name(value) {
+    Ok("distance_info") -> decoder
+    _ -> decode.failure(fallback, "DistanceInfo")
+  }
+}
+
+fn date_time_matcher_decoder() -> decode.Decoder(DateTimeMatcher) {
+  let fallback = create_date_time_matcher()
+  let decoder = {
+    use skeleton <- decode.field(1, ptn_skeleton_decoder())
+    decode.success(DateTimeMatcher(skeleton:))
+  }
+  use value <- decode.then(decode.dynamic)
+  case constructor_name(value) {
+    Ok("date_time_matcher") -> decoder
+    _ -> decode.failure(fallback, "DateTimeMatcher")
+  }
+}
+
+fn ptn_elem_decoder() -> decode.Decoder(PtnElem) {
+  let fallback = PtnElem("", create_ptn_skeleton(), "", False)
+  let decoder = {
+    use base_pattern <- decode.field(1, decode.string)
+    use skeleton <- decode.field(2, ptn_skeleton_decoder())
+    use pattern <- decode.field(3, decode.string)
+    use skeleton_was_specified <- decode.field(4, decode.bool)
+    decode.success(PtnElem(
+      base_pattern:,
+      skeleton:,
+      pattern:,
+      skeleton_was_specified:,
+    ))
+  }
+  use value <- decode.then(decode.dynamic)
+  case constructor_name(value) {
+    Ok("ptn_elem") -> decoder
+    _ -> decode.failure(fallback, "PtnElem")
+  }
+}
+
+fn pattern_map_decoder() -> decode.Decoder(PatternMap) {
+  let fallback = create_pattern_map()
+  let decoder = {
+    use boot <- decode.field(
+      1,
+      decode.dict(decode.int, decode.list(ptn_elem_decoder())),
+    )
+    use all_elems <- decode.field(2, decode.list(ptn_elem_decoder()))
+    decode.success(PatternMap(boot:, all_elems:))
+  }
+  use value <- decode.then(decode.dynamic)
+  case constructor_name(value) {
+    Ok("pattern_map") -> decoder
+    _ -> decode.failure(fallback, "PatternMap")
+  }
+}
+
+fn format_parser_decoder() -> decode.Decoder(FormatParser) {
+  let fallback = create_format_parser()
+  let decoder = {
+    use items <- decode.field(1, decode.list(decode.string))
+    use item_number <- decode.field(2, decode.int)
+    use index <- decode.field(3, decode.dict(decode.int, decode.string))
+    decode.success(FormatParser(items:, item_number:, index:))
+  }
+  use value <- decode.then(decode.dynamic)
+  case constructor_name(value) {
+    Ok("format_parser") -> decoder
+    _ -> decode.failure(fallback, "FormatParser")
+  }
+}
+
+fn date_time_pattern_generator_decoder() -> decode.Decoder(
+  DateTimePatternGenerator,
+) {
+  let fallback = create_date_time_pattern_generator()
+  let decoder = {
+    use fp <- decode.field(1, format_parser_decoder())
+    use dt_matcher <- decode.field(2, date_time_matcher_decoder())
+    use distance_info <- decode.field(3, distance_info_decoder())
+    use pattern_map <- decode.field(4, pattern_map_decoder())
+    use append_item_formats <- decode.field(
+      5,
+      decode.dict(decode.int, decode.string),
+    )
+    use field_display_names <- decode.field(
+      6,
+      decode.dict(decode.int, decode.dict(decode.int, decode.string)),
+    )
+    use date_time_format <- decode.field(
+      7,
+      decode.dict(decode.int, decode.string),
+    )
+    use decimal <- decode.field(8, decode.string)
+    use skip_matcher <- decode.field(
+      9,
+      option_decoder(date_time_matcher_decoder()),
+    )
+    use available_format_keys <- decode.field(10, decode.list(decode.string))
+    use default_hour_format_char <- decode.field(11, decode.string)
+    use allowed_hour_formats <- decode.field(12, decode.list(decode.string))
+    use bundle <- decode.field(13, none_bundle_decoder())
+    use locale_id <- decode.field(14, decode.string)
+    use base_name <- decode.field(15, decode.string)
+    use chain <- decode.field(16, option_decoder(decode.list(decode.string)))
+    decode.success(DateTimePatternGenerator(
+      fp:,
+      dt_matcher:,
+      distance_info:,
+      pattern_map:,
+      append_item_formats:,
+      field_display_names:,
+      date_time_format:,
+      decimal:,
+      skip_matcher:,
+      available_format_keys:,
+      default_hour_format_char:,
+      allowed_hour_formats:,
+      bundle:,
+      locale_id:,
+      base_name:,
+      chain:,
+    ))
+  }
+  use value <- decode.then(decode.dynamic)
+  case constructor_name(value) {
+    Ok("date_time_pattern_generator") -> decoder
+    _ -> decode.failure(fallback, "DateTimePatternGenerator")
+  }
 }
 
 pub type MapSkeletonResult {

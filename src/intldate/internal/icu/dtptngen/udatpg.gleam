@@ -6,7 +6,6 @@ import intldate/internal/icu/dtptngen/dtptngen.{
 }
 import intldate/internal/icu/icudata/bundle.{type Bundle}
 import intldate/internal/icu/icudata/cache
-import intldate/internal/icu/icudata/etf
 
 const generator_cache_prefix = "dtpg:"
 
@@ -26,11 +25,14 @@ pub fn udatpg_open_memo(
         Error(_) ->
           case dict.get(bundle.pattern_generators.generators, generator_id) {
             Ok(encoded) ->
-              cache.put(
-                generator_cache_prefix <> int.to_string(generator_id),
-                etf.decode(encoded)
-                  |> dtptngen.dtpg_prepare_for_runtime,
-              )
+              case dtptngen.dtpg_decode(encoded) {
+                Ok(generator) ->
+                  cache.put(
+                    generator_cache_prefix <> int.to_string(generator_id),
+                    dtptngen.dtpg_prepare_for_runtime(generator),
+                  )
+                Error(_) -> udatpg_open(bundle, Some(locale_id))
+              }
             Error(_) -> udatpg_open(bundle, Some(locale_id))
           }
       }
