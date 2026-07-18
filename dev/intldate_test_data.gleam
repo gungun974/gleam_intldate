@@ -12,7 +12,7 @@ import intlrelative.{type Unit}
 import prng/random
 import simplifile
 
-const default_count = 3000
+const default_count = 5000
 
 pub fn main() {
   let count = case argv.load().arguments {
@@ -34,18 +34,37 @@ pub fn main() {
   generate_relative_resolved_options_tests(count)
 }
 
-const locales = ["fr-FR", "en-US", "en-GB", "de-DE", "es-ES", "ja-JP", "ar-SA"]
-
-const time_zones = [
-  "Indian/Reunion", "Europe/Paris", "America/New_York", "Asia/Tokyo",
-  "Australia/Sydney", "Africa/Johannesburg", "UTC",
+const locales = [
+  "fr-FR", "fr-CA", "en-US", "en-GB", "en-AU", "en-IN", "de-DE", "de-AT",
+  "es-ES", "es-MX", "es-AR", "it-IT", "pt-BR", "pt-PT", "nl-NL", "sv-SE",
+  "nb-NO", "da-DK", "fi-FI", "pl-PL", "cs-CZ", "ro-RO", "hu-HU", "tr-TR",
+  "ru-RU", "uk-UA", "el-GR", "he-IL", "ar-SA", "ar-EG", "fa-IR", "hi-IN",
+  "bn-BD", "th-TH", "vi-VN", "id-ID", "ms-MY", "ja-JP", "ko-KR", "zh-CN",
+  "zh-TW", "zh-Hant-TW", "zh-Hans-CN", "mn-MN", "am-ET", "sw-KE", "ka-GE",
+  "hy-AM", "km-KH", "ta-IN", "ur-PK", "sr-RS", "sr-Cyrl-RS", "sr-Latn-RS",
+  "bg-BG", "hr-HR", "sk-SK", "sl-SI", "lt-LT", "lv-LV", "et-EE", "is-IS",
+  "mt-MT", "ga-IE", "cy-GB", "th-TH-u-ca-buddhist", "ja-JP-u-ca-japanese",
+  "zh-CN-u-ca-chinese", "he-IL-u-ca-hebrew", "en-US-u-hc-h12", "ar-SA-u-nu-arab",
 ]
 
-const min_unix_seconds = 0
+const time_zones = [
+  "UTC", "Europe/Paris", "Europe/London", "Europe/Moscow", "Europe/Istanbul",
+  "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+  "America/Anchorage", "America/Sao_Paulo", "America/St_Johns",
+  "America/Argentina/Buenos_Aires", "Pacific/Honolulu", "Pacific/Auckland",
+  "Pacific/Chatham", "Pacific/Kiritimati", "Pacific/Marquesas", "Pacific/Niue",
+  "Australia/Sydney", "Australia/Lord_Howe", "Australia/Eucla", "Asia/Tokyo",
+  "Asia/Shanghai", "Asia/Kolkata", "Asia/Kathmandu", "Asia/Yangon",
+  "Asia/Tehran", "Asia/Dubai", "Asia/Jerusalem", "Africa/Johannesburg",
+  "Africa/Cairo", "Africa/Casablanca", "Indian/Reunion", "Atlantic/Azores",
+  "Antarctica/Troll",
+]
+
+const min_unix_seconds = -2_208_988_800
 
 const max_unix_seconds = 4_102_444_800
 
-const max_range_duration_seconds = 31_622_400
+const max_range_duration_seconds = 94_672_800
 
 fn pick(options: List(a)) -> random.Generator(a) {
   let assert Ok(generator) = random.try_uniform(options)
@@ -176,19 +195,23 @@ fn format_matcher_generator() -> random.Generator(intldate.FormatMatcher) {
 fn date_time_format_config_generator() -> random.Generator(
   intldate.DateTimeFormatConfig,
 ) {
-  use locale_matcher <- random.then(maybe(locale_matcher_generator(), 0.7))
-  use calendar <- random.then(maybe(calendar_generator(), 0.7))
-  use weekday <- random.then(maybe(weekday_generator(), 0.7))
-  use era <- random.then(maybe(era_generator(), 0.3))
-  use year <- random.then(maybe(year_generator(), 0.7))
-  use month <- random.then(maybe(month_generator(), 0.7))
-  use day <- random.then(maybe(day_generator(), 0.7))
-  use hour <- random.then(maybe(hour_generator(), 0.7))
-  use minute <- random.then(maybe(minute_generator(), 0.7))
-  use second <- random.then(maybe(second_generator(), 0.5))
-  use time_zone_name <- random.then(maybe(time_zone_name_generator(), 0.4))
-  use format_matcher <- random.then(maybe(format_matcher_generator(), 0.7))
-  use hour12 <- random.then(maybe(random.choose(True, False), 0.7))
+  use density <- random.then(random.float(0.02, 0.98))
+  use locale_matcher <- random.then(maybe(locale_matcher_generator(), density))
+  use calendar <- random.then(maybe(calendar_generator(), density))
+  use weekday <- random.then(maybe(weekday_generator(), density))
+  use era <- random.then(maybe(era_generator(), density *. 0.5))
+  use year <- random.then(maybe(year_generator(), density))
+  use month <- random.then(maybe(month_generator(), density))
+  use day <- random.then(maybe(day_generator(), density))
+  use hour <- random.then(maybe(hour_generator(), density))
+  use minute <- random.then(maybe(minute_generator(), density))
+  use second <- random.then(maybe(second_generator(), density *. 0.8))
+  use time_zone_name <- random.then(maybe(
+    time_zone_name_generator(),
+    density *. 0.7,
+  ))
+  use format_matcher <- random.then(maybe(format_matcher_generator(), density))
+  use hour12 <- random.then(maybe(random.choose(True, False), density))
 
   random.constant(
     intldate.new()
@@ -251,12 +274,13 @@ fn relative_unit_seconds(unit: Unit) -> Int {
 fn relative_time_format_config_generator() -> random.Generator(
   intlrelative.RelativeTimeFormatConfig,
 ) {
+  use density <- random.then(random.float(0.02, 0.98))
   use locale_matcher <- random.then(maybe(
     relative_locale_matcher_generator(),
-    0.7,
+    density,
   ))
-  use style <- random.then(maybe(relative_style_generator(), 0.7))
-  use numeric <- random.then(maybe(relative_numeric_generator(), 0.7))
+  use style <- random.then(maybe(relative_style_generator(), density))
+  use numeric <- random.then(maybe(relative_numeric_generator(), density))
 
   random.constant(
     intlrelative.new()
@@ -494,7 +518,7 @@ pub fn generate_resolved_options_tests(count: Int) -> Nil {
 fn relative_format_test_case_generator() -> random.Generator(
   RelativeFormatTestCase,
 ) {
-  use value <- random.then(random.int(-10, 10))
+  use value <- random.then(random.int(-99_999, 99_999))
   use unit <- random.then(relative_unit_generator())
   use locale <- random.then(pick(locales))
   use config <- random.then(relative_time_format_config_generator())
@@ -538,7 +562,7 @@ pub fn generate_relative_tests(count: Int) -> Nil {
 fn relative_parts_test_case_generator() -> random.Generator(
   RelativePartsTestCase,
 ) {
-  use value <- random.then(random.int(-10, 10))
+  use value <- random.then(random.int(-99_999, 99_999))
   use unit <- random.then(relative_unit_generator())
   use locale <- random.then(pick(locales))
   use config <- random.then(relative_time_format_config_generator())
