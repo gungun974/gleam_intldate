@@ -1906,7 +1906,15 @@ fn ordered_merge_calendar_field(
     Option(resource.CalendarField(Dict(String, a))),
 ) -> List(#(String, a)) {
   let #(rev, _seen) =
-    ordered_merge_calendars(locales, chain, cal_type, select, [], dict.new(), [])
+    ordered_merge_calendars(
+      locales,
+      chain,
+      cal_type,
+      select,
+      [],
+      dict.new(),
+      [],
+    )
   list.reverse(rev)
 }
 
@@ -1952,7 +1960,15 @@ fn ordered_merge_chain(
     [locale, ..rest] ->
       case calendar_data_for(locales, locale, cal_type) {
         None ->
-          ordered_merge_chain(locales, rest, cal_type, select, acc, seen, next_cal)
+          ordered_merge_chain(
+            locales,
+            rest,
+            cal_type,
+            select,
+            acc,
+            seen,
+            next_cal,
+          )
         Some(data) ->
           case select(data) {
             None ->

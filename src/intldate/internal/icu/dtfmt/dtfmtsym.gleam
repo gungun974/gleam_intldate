@@ -664,9 +664,7 @@ fn uncached_get_month_name(
         { cal == "chinese" || cal == "dangi" } && width == "abbreviated"
       {
         True ->
-          case
-            local_chinese_month(locales, chain, cal, field, context, month)
-          {
+          case local_chinese_month(locales, chain, cal, field, context, month) {
             Some(value) -> Some(value)
             None ->
               lookup_array_at(locales, chain, cal, field, context, width, month)
@@ -975,7 +973,12 @@ fn local_calendar_array(
   case find_leaf(locales, chain, chain, cal, field, Some, 0) {
     None -> None
     Some(names) ->
-      case real_leaf_at(pick_width_names(pick_context_names(names, context), width), index) {
+      case
+        real_leaf_at(
+          pick_width_names(pick_context_names(names, context), width),
+          index,
+        )
+      {
         Some(value) -> Some(value)
         None ->
           case context == "stand-alone" {
