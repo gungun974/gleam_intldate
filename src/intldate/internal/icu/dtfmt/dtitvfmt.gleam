@@ -1676,6 +1676,12 @@ pub fn set_separate_date_time_ptn(
                 )
                 False -> #(skeleton, best_skeleton)
               }
+              let extend_era =
+                fmt.cal_type != "japanese"
+                || {
+                  !string.contains(date_skeleton, "M")
+                  && !string.contains(date_skeleton, "L")
+                }
               let year_result =
                 set_interval_pattern_for_field(
                   next_fmt,
@@ -1688,6 +1694,21 @@ pub fn set_separate_date_time_ptn(
                 )
               let next_fmt =
                 DateIntervalFormat(..next_fmt, patterns: year_result.patterns)
+              let #(effective_skeleton, effective_best_skeleton) = case
+                year_result.extended
+              {
+                True -> #(
+                  option.unwrap(
+                    year_result.extended_skeleton,
+                    effective_skeleton,
+                  ),
+                  option.unwrap(
+                    year_result.extended_best_skeleton,
+                    effective_best_skeleton,
+                  ),
+                )
+                False -> #(effective_skeleton, effective_best_skeleton)
+              }
               let era_result =
                 set_interval_pattern_for_field(
                   next_fmt,
@@ -1696,7 +1717,7 @@ pub fn set_separate_date_time_ptn(
                   effective_skeleton,
                   effective_best_skeleton,
                   best.difference_info,
-                  True,
+                  extend_era,
                 )
               let next_fmt =
                 DateIntervalFormat(..next_fmt, patterns: era_result.patterns)
@@ -2058,6 +2079,111 @@ fn initialize_pattern_time_only_fallback(
       "G" <> with_date,
     )
   DateIntervalFormat(..fmt, patterns:)
+}
+
+fn force_numeric_month_width(pattern: String) -> String {
+  pattern
+  |> find_replace_in_pattern("MMMMM", "M")
+  |> find_replace_in_pattern("MMMM", "M")
+  |> find_replace_in_pattern("MMM", "M")
+  |> find_replace_in_pattern("MM", "M")
+  |> find_replace_in_pattern("LLLLL", "L")
+  |> find_replace_in_pattern("LLLL", "L")
+  |> find_replace_in_pattern("LLL", "L")
+  |> find_replace_in_pattern("LL", "L")
+}
+
+fn add_cyclic_calendar_missing_month_fallback(
+  fmt: DateIntervalFormat,
+) -> DateIntervalFormat {
+  let needs_indonesian_cyclic_fallback =
+    { fmt.cal_type == "chinese" || fmt.cal_type == "dangi" }
+    && uloc.get_language_subtag(Some(fmt.locale_id)) == "id"
+  let has_month =
+    string.contains(fmt.skeleton, "M") || string.contains(fmt.skeleton, "L")
+  let has_hour = list.any(graphemes(fmt.skeleton), is_hour_char)
+  let has_day = string.contains(fmt.skeleton, "d")
+  let has_second = string.contains(fmt.skeleton, "s")
+  case
+    needs_indonesian_cyclic_fallback
+    && !has_month
+    && has_hour
+    && has_day
+    && !has_second
+  {
+    False -> fmt
+    True -> {
+      let cyclic_skeleton =
+        fmt.skeleton
+        |> string.replace("G", "")
+        |> string.replace("y", "")
+        |> string.replace("Y", "")
+        |> string.replace("u", "")
+        |> string.replace("r", "")
+        |> string.replace("U", "")
+      let pattern =
+        get_best_pattern(fmt, "UMMM" <> cyclic_skeleton)
+        |> force_numeric_month_width
+      let patterns =
+        set_pattern_info(
+          fmt.patterns,
+          "month",
+          None,
+          Some(pattern),
+          dtitvinf.get_default_order(fmt.info),
+        )
+      DateIntervalFormat(..fmt, patterns:)
+    }
+  }
+}
+
+fn add_mongolian_chinese_interval_grammar(
+  fmt: DateIntervalFormat,
+) -> DateIntervalFormat {
+  let needs_interval_grammar =
+    fmt.cal_type == "chinese"
+    && uloc.get_language_subtag(Some(fmt.locale_id)) == "mn"
+    && string.contains(fmt.skeleton, "U")
+    && string.contains(fmt.skeleton, "MMMM")
+    && string.contains(fmt.skeleton, "E")
+    && string.contains(fmt.skeleton, "d")
+  case needs_interval_grammar, fmt.full_pattern {
+    False, _ | _, None -> fmt
+    True, Some(full_pattern) -> {
+      let add_grammar = fn(pattern) {
+        find_replace_in_pattern(
+          pattern,
+          "r(U) MMMM d",
+          "r(U) 'оны' MMMM 'сарын' d",
+        )
+      }
+      let grammatical_full_pattern = add_grammar(full_pattern)
+      let patterns =
+        dict.map_values(fmt.patterns, fn(_field, entry) {
+          IntervalPatternEntry(
+            ..entry,
+            first_part: option.map(entry.first_part, add_grammar),
+            second_part: add_grammar(entry.second_part),
+          )
+        })
+      let patterns =
+        ["era", "year", "month", "date"]
+        |> list.fold(patterns, fn(patterns, field) {
+          set_pattern_info(
+            patterns,
+            field,
+            None,
+            Some(grammatical_full_pattern),
+            dtitvinf.get_default_order(fmt.info),
+          )
+        })
+      DateIntervalFormat(
+        ..fmt,
+        patterns:,
+        date_pattern: option.map(fmt.date_pattern, add_grammar),
+      )
+    }
+  }
 }
 
 pub fn greatest_differing_field(
@@ -2479,9 +2605,48 @@ fn fa_month_interval_collapses(
 ) -> Bool {
   field == Some("month")
   && uloc.get_language_subtag(Some(fmt.locale_id)) == "fa"
+  && fmt.cal_type == "persian"
   && string.contains(fmt.skeleton, "y")
   && string.contains(fmt.skeleton, "MMM")
   && !string.contains(fmt.skeleton, "d")
+  && list.all(string.to_graphemes(fmt.skeleton), fn(field) {
+    list.contains(["G", "y", "M"], field)
+  })
+}
+
+fn fa_date_only_text_month_interval_has_shared_months(
+  fmt: DateIntervalFormat,
+  field: Option(String),
+) -> Bool {
+  field == Some("month")
+  && uloc.get_language_subtag(Some(fmt.locale_id)) == "fa"
+  && fmt.cal_type == "persian"
+  && string.contains(fmt.skeleton, "y")
+  && string.contains(fmt.skeleton, "MMM")
+  && string.contains(fmt.skeleton, "d")
+  && list.all(string.to_graphemes(fmt.skeleton), fn(field) {
+    list.contains(["G", "y", "M", "L", "E", "e", "c", "d"], field)
+  })
+}
+
+fn share_months_and_leading_literals(
+  parts: List(SourcedFormatPart),
+) -> List(SourcedFormatPart) {
+  case parts {
+    [] -> []
+    [literal, month, ..rest]
+      if literal.type_ == "literal" && month.type_ == "month"
+    -> [
+      SourcedFormatPart(..literal, source: "shared"),
+      SourcedFormatPart(..month, source: "shared"),
+      ..share_months_and_leading_literals(rest)
+    ]
+    [month, ..rest] if month.type_ == "month" -> [
+      SourcedFormatPart(..month, source: "shared"),
+      ..share_months_and_leading_literals(rest)
+    ]
+    [part, ..rest] -> [part, ..share_months_and_leading_literals(rest)]
+  }
 }
 
 pub fn format(
@@ -2514,9 +2679,15 @@ pub fn format(
       case pattern_info {
         Ok(info) if info.first_part != None -> {
           let r = render_combined(fmt, from_side, to_side, info)
+          let parts = case
+            fa_date_only_text_month_interval_has_shared_months(fmt, greatest)
+          {
+            True -> share_months_and_leading_literals(r.parts)
+            False -> r.parts
+          }
           DateIntervalFormatResult(
             formatted: r.formatted,
-            parts: merge_adjacent_shared_literals(r.parts),
+            parts: merge_adjacent_shared_literals(parts),
           )
         }
         _ ->
@@ -2642,6 +2813,8 @@ pub fn create_date_interval_format(
       full_pattern: Some(get_best_pattern(base, skeleton)),
     )
   initialize_pattern(with_pattern)
+  |> add_cyclic_calendar_missing_month_fallback
+  |> add_mongolian_chinese_interval_grammar
 }
 
 pub fn date_interval_format_set_time_zone(

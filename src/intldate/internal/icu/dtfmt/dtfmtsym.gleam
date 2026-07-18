@@ -1188,15 +1188,15 @@ fn uncached_get_am_pm(
 fn uncached_get_day_period_name(
   bundle: Bundle,
   chain: List(LocaleChainEntry),
-  cal_type: String,
+  cal_type_in: String,
   context: String,
   width: String,
   period_name: String,
 ) -> Option(String) {
   let locales = bundle.calendar_symbols_by_locale.locales
-  let cal = text_cal_type(cal_type)
+  let cal = text_cal_type(cal_type_in)
   let field = fn(cs: resource.CalendarSymbols) { cs.day_period }
-  case
+  let lookup_calendar = fn(width) {
     lookup_day_period_value(
       locales,
       chain,
@@ -1206,20 +1206,31 @@ fn uncached_get_day_period_name(
       width,
       period_name,
     )
-  {
+  }
+  let lookup_with_gregorian_fallback = fn(width) {
+    case lookup_calendar(width) {
+      Some(found) -> Some(found)
+      None ->
+        case cal == "gregorian" {
+          True -> None
+          False ->
+            lookup_day_period_value(
+              locales,
+              chain,
+              "gregorian",
+              field,
+              context,
+              width,
+              period_name,
+            )
+        }
+    }
+  }
+  case lookup_with_gregorian_fallback(width) {
     Some(found) -> Some(found)
     None ->
       case width == "wide" || width == "narrow" {
-        True ->
-          lookup_day_period_value(
-            locales,
-            chain,
-            cal,
-            field,
-            context,
-            "abbreviated",
-            period_name,
-          )
+        True -> lookup_with_gregorian_fallback("abbreviated")
         False -> None
       }
   }

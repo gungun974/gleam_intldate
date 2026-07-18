@@ -570,7 +570,47 @@ pub fn get_offset_local(
   local_millis: Int,
 ) -> ZoneOffset {
   let offset = get_offset(bundle, canonical_tzid, local_millis)
-  get_offset_local_loop(bundle, canonical_tzid, local_millis, offset, 0)
+  let resolved =
+    get_offset_local_loop(bundle, canonical_tzid, local_millis, offset, 0)
+  let resolved_epoch = local_millis - resolved.raw_offset - resolved.dst_offset
+  let before =
+    get_offset(bundle, canonical_tzid, resolved_epoch - millis_per_day)
+  let after =
+    get_offset(bundle, canonical_tzid, resolved_epoch + millis_per_day)
+  resolved
+  |> prefer_later_valid_local_offset(
+    bundle,
+    canonical_tzid,
+    local_millis,
+    before,
+  )
+  |> prefer_later_valid_local_offset(
+    bundle,
+    canonical_tzid,
+    local_millis,
+    after,
+  )
+}
+
+fn prefer_later_valid_local_offset(
+  current: ZoneOffset,
+  bundle: Bundle,
+  canonical_tzid: String,
+  local_millis: Int,
+  candidate: ZoneOffset,
+) -> ZoneOffset {
+  let current_epoch = local_millis - current.raw_offset - current.dst_offset
+  let candidate_epoch =
+    local_millis - candidate.raw_offset - candidate.dst_offset
+  let actual = get_offset(bundle, canonical_tzid, candidate_epoch)
+  case
+    candidate_epoch > current_epoch
+    && actual.raw_offset == candidate.raw_offset
+    && actual.dst_offset == candidate.dst_offset
+  {
+    True -> candidate
+    False -> current
+  }
 }
 
 fn get_offset_local_loop(
