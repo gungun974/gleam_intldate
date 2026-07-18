@@ -2,6 +2,7 @@ import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import intldate/internal/icu/icudata/bundle.{type Bundle}
 import intldate/internal/icu/locale/locdistance
 import intldate/internal/icu/locale/loclikelysubtags
@@ -319,16 +320,15 @@ pub fn create_locale_matcher(
   bundle: Bundle,
   supported_locale_names: List(String),
   builder_override: Option(LocaleMatcherBuilder),
-) -> LocaleMatcher {
+) -> Result(LocaleMatcher, String) {
   let builder = case builder_override {
     Some(b) -> b
     None -> builder_from_supported_locales(supported_locale_names)
   }
 
-  let likely_subtags = case loclikelysubtags.create_likely_subtags(bundle) {
-    Ok(state) -> state
-    Error(msg) -> panic as msg
-  }
+  use likely_subtags <- result.try(loclikelysubtags.create_likely_subtags(
+    bundle,
+  ))
   let likely = loclikelysubtags.to_likely_subtags(likely_subtags)
   let locale_distance = locdistance.create_locale_distance(likely)
   let favor_subtag = builder.favor
@@ -463,7 +463,7 @@ pub fn create_locale_matcher(
       }
   }
 
-  LocaleMatcher(
+  Ok(LocaleMatcher(
     bundle:,
     likely_subtags:,
     locale_distance:,
@@ -479,7 +479,7 @@ pub fn create_locale_matcher(
     supported_indexes:,
     supported_lsrs_length:,
     default_locale: def,
-  )
+  ))
 }
 
 fn fold_order2(

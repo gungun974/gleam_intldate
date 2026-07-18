@@ -105,20 +105,16 @@ fn truncate_locale(candidate: String) -> String {
 fn best_fit_supported_locale(
   bundle: bundle.Bundle,
   base: String,
-) -> Option(String) {
+) -> Result(Option(String), IcuError) {
   case dict.has_key(available_locale_names(bundle), base) {
-    True -> Some(base)
+    True -> Ok(Some(base))
     False -> {
+      use matcher <- result.try(available_locale_matcher(bundle))
       let matched =
-        localematcher.accept_language_with_matcher(
-          available_locale_matcher(bundle),
-          [base],
-          False,
-          "",
-        )
+        localematcher.accept_language_with_matcher(matcher, [base], False, "")
       case matched {
-        None -> None
-        Some(_) -> lookup_supported_locale(bundle, base)
+        None -> Ok(None)
+        Some(_) -> Ok(lookup_supported_locale(bundle, base))
       }
     }
   }
@@ -218,10 +214,10 @@ fn select_supported_locale(
   case base {
     "" -> Error(FailedToLoadLocale(locale_id))
     _ -> {
-      let matched = case matcher {
+      use matched <- result.try(case matcher {
         LocaleMatcherBestFit -> best_fit_supported_locale(bundle, base)
-        LocaleMatcherLookup -> lookup_supported_locale(bundle, base)
-      }
+        LocaleMatcherLookup -> Ok(lookup_supported_locale(bundle, base))
+      })
       case matched {
         Some(supported) -> Ok(replace_locale_base(locale_id, supported))
         None -> Error(FailedToLoadLocale(locale_id))
@@ -232,10 +228,11 @@ fn select_supported_locale(
 
 fn available_locale_matcher(
   bundle: bundle.Bundle,
-) -> localematcher.LocaleMatcher {
+) -> Result(localematcher.LocaleMatcher, IcuError) {
   let available =
     uloc.uloc_open_available_by_type(bundle, uloc_available_default)
   localematcher.create_locale_matcher(bundle, available.items, None)
+  |> result.map_error(FailedToLoadData)
 }
 
 fn load_bundle() -> Result(bundle.Bundle, IcuError) {
@@ -276,6 +273,7 @@ fn raw_resolve_locale(
         True ->
           case select_supported_locale(bundle, parsed.locale_id, matcher) {
             Ok(locale_id) -> Ok(locale_id)
+            Error(FailedToLoadData(inner)) -> Error(FailedToLoadData(inner))
             Error(_) -> Error(FailedToLoadLocale(tag))
           }
       }
@@ -725,12 +723,9 @@ pub fn format_range_resolved(
     Some(result) ->
       case has_interval_span(result) {
         False ->
-          Ok(normalize_spaces(raw_format(
-            context,
-            tz,
-            pattern,
-            from_milliseconds,
-          )))
+          Ok(
+            normalize_spaces(raw_format(context, tz, pattern, from_milliseconds)),
+          )
         True -> Ok(result.formatted)
       }
   }
