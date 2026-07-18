@@ -1898,6 +1898,118 @@ fn merge_calendar_field_chain(
   }
 }
 
+fn ordered_merge_calendar_field(
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  chain: List(String),
+  cal_type: String,
+  select: fn(resource.DateIntervalCalendarData) ->
+    Option(resource.CalendarField(Dict(String, a))),
+) -> List(#(String, a)) {
+  let #(rev, _seen) =
+    ordered_merge_calendars(locales, chain, cal_type, select, [], dict.new(), [])
+  list.reverse(rev)
+}
+
+fn ordered_merge_calendars(
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  chain: List(String),
+  cal_type: String,
+  select: fn(resource.DateIntervalCalendarData) ->
+    Option(resource.CalendarField(Dict(String, a))),
+  acc: List(#(String, a)),
+  seen: Dict(String, Nil),
+  loaded: List(String),
+) -> #(List(#(String, a)), Dict(String, Nil)) {
+  case list.contains(loaded, cal_type) {
+    True -> #(acc, seen)
+    False -> {
+      let #(acc, seen, next_cal) =
+        ordered_merge_chain(locales, chain, cal_type, select, acc, seen, None)
+      case next_cal {
+        None -> #(acc, seen)
+        Some(target) ->
+          ordered_merge_calendars(locales, chain, target, select, acc, seen, [
+            cal_type,
+            ..loaded
+          ])
+      }
+    }
+  }
+}
+
+fn ordered_merge_chain(
+  locales: Dict(String, Dict(String, resource.DateIntervalCalendarData)),
+  chain: List(String),
+  cal_type: String,
+  select: fn(resource.DateIntervalCalendarData) ->
+    Option(resource.CalendarField(Dict(String, a))),
+  acc: List(#(String, a)),
+  seen: Dict(String, Nil),
+  next_cal: Option(String),
+) -> #(List(#(String, a)), Dict(String, Nil), Option(String)) {
+  case chain {
+    [] -> #(acc, seen, next_cal)
+    [locale, ..rest] ->
+      case calendar_data_for(locales, locale, cal_type) {
+        None ->
+          ordered_merge_chain(locales, rest, cal_type, select, acc, seen, next_cal)
+        Some(data) ->
+          case select(data) {
+            None ->
+              ordered_merge_chain(
+                locales,
+                rest,
+                cal_type,
+                select,
+                acc,
+                seen,
+                next_cal,
+              )
+            Some(resource.CalendarValue(found)) -> {
+              let #(acc, seen) = ordered_add_found(found, acc, seen)
+              ordered_merge_chain(
+                locales,
+                rest,
+                cal_type,
+                select,
+                acc,
+                seen,
+                next_cal,
+              )
+            }
+            Some(resource.CalendarAliasTo(target)) ->
+              ordered_merge_chain(
+                locales,
+                rest,
+                cal_type,
+                select,
+                acc,
+                seen,
+                Some(target),
+              )
+          }
+      }
+  }
+}
+
+fn ordered_add_found(
+  found: Dict(String, a),
+  acc: List(#(String, a)),
+  seen: Dict(String, Nil),
+) -> #(List(#(String, a)), Dict(String, Nil)) {
+  found
+  |> dict.to_list
+  |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
+  |> list.fold(#(acc, seen), fn(state, entry) {
+    let #(acc, seen) = state
+    let #(key, value) = entry
+    case dict.has_key(seen, key) {
+      True -> #(acc, seen)
+      False -> #([#(key, value), ..acc], dict.insert(seen, key, Nil))
+    }
+  })
+}
+
 fn dtpg_add_icu_patterns(
   dtpg: DateTimePatternGenerator,
 ) -> DateTimePatternGenerator {
@@ -2156,12 +2268,10 @@ fn dtpg_add_cldr_data_available_formats(
     Some(bundle), Some(chain) -> {
       let locales = scoped_date_interval_data(bundle).locales
       let formats =
-        merge_calendar_field(locales, chain, cal_type, fn(data) {
+        ordered_merge_calendar_field(locales, chain, cal_type, fn(data) {
           data.available_formats
         })
       formats
-      |> dict.to_list
-      |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
       |> list.fold(dtpg, fn(dtpg, entry) {
         let #(key, value) = entry
         let dtpg =

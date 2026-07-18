@@ -191,6 +191,8 @@ fn prepare(
     skeleton,
     map_locale_matcher(config.locale_matcher),
     match_hour_field_length(config.format_matcher),
+    config.hour12,
+    option.is_some(config.hour),
   ))
   let #(adjusted, hour_cycle_keyword) =
     adjust_pattern(
@@ -417,7 +419,6 @@ fn normalize_spaces(text: String) -> String {
   text
   |> string.replace("\u{00A0}", " ")
   |> string.replace("\u{202F}", " ")
-  |> string.replace("\u{2009}", " ")
 }
 
 pub type RelativeUnit {

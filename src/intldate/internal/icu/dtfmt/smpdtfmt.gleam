@@ -513,15 +513,21 @@ fn format_offset_localized_gmt(
     False -> pad2(h, digits)
   }
   let hm = split.prefix <> hour_str
-  let hm = case s != 0 {
-    True -> hm <> split.sep <> pad2(m, digits) <> split.sep <> pad2(s, digits)
+  let #(hm, hour_only) = case s != 0 {
+    True -> #(
+      hm <> split.sep <> pad2(m, digits) <> split.sep <> pad2(s, digits),
+      False,
+    )
     False ->
       case m != 0 || !is_short {
-        True -> hm <> split.sep <> pad2(m, digits)
-        False -> hm
+        True -> #(hm <> split.sep <> pad2(m, digits), False)
+        False -> #(hm, True)
       }
   }
-  let hm = hm <> split.suffix
+  let hm = case hour_only {
+    True -> hm
+    False -> hm <> split.suffix
+  }
   string_replace_once(gmt_format, "{0}", hm)
 }
 

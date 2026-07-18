@@ -660,8 +660,20 @@ fn uncached_get_month_name(
   let field = fn(cs: resource.CalendarSymbols) { cs.month_names }
   case width == "wide" || width == "abbreviated" {
     True -> {
-      let own =
-        lookup_array_at(locales, chain, cal, field, context, width, month)
+      let own = case
+        { cal == "chinese" || cal == "dangi" } && width == "abbreviated"
+      {
+        True ->
+          case
+            local_chinese_month(locales, chain, cal, field, context, month)
+          {
+            Some(value) -> Some(value)
+            None ->
+              lookup_array_at(locales, chain, cal, field, context, width, month)
+          }
+        False ->
+          lookup_array_at(locales, chain, cal, field, context, width, month)
+      }
       case own {
         Some(value) -> Some(value)
         None ->
@@ -748,6 +760,62 @@ fn uncached_get_month_name(
   }
 }
 
+fn local_chinese_month(
+  locales: Dict(String, Dict(String, resource.CalendarSymbols)),
+  chain: List(LocaleChainEntry),
+  cal: String,
+  field: fn(resource.CalendarSymbols) ->
+    Option(resource.CalendarField(resource.ContextNames)),
+  context: String,
+  month: Int,
+) -> Option(String) {
+  case chain {
+    [] -> None
+    [level, ..rest] ->
+      case level_real_context_names(locales, level.name, cal, field) {
+        Some(names) -> {
+          let widths = pick_context_names(names, context)
+          case real_leaf_at(pick_width_names(widths, "abbreviated"), month) {
+            Some(value) -> Some(value)
+            None -> real_leaf_at(pick_width_names(widths, "wide"), month)
+          }
+        }
+        None -> local_chinese_month(locales, rest, cal, field, context, month)
+      }
+  }
+}
+
+fn level_real_context_names(
+  locales: Dict(String, Dict(String, resource.CalendarSymbols)),
+  name: String,
+  cal: String,
+  field: fn(resource.CalendarSymbols) ->
+    Option(resource.CalendarField(resource.ContextNames)),
+) -> Option(resource.ContextNames) {
+  case dict.get(locales, name) {
+    Error(_) -> None
+    Ok(by_cal) ->
+      case dict.get(by_cal, cal) {
+        Error(_) -> None
+        Ok(symbols) ->
+          case field(symbols) {
+            Some(resource.CalendarValue(names)) -> Some(names)
+            _ -> None
+          }
+      }
+  }
+}
+
+fn real_leaf_at(
+  leaf: Option(resource.CalendarLeaf(List(String))),
+  index: Int,
+) -> Option(String) {
+  case leaf {
+    Some(resource.CalendarLeafValue(arr)) -> list_at(arr, index)
+    _ -> None
+  }
+}
+
 fn uncached_get_day_name(
   bundle: Bundle,
   chain: List(LocaleChainEntry),
@@ -761,27 +829,33 @@ fn uncached_get_day_name(
   let field = fn(cs: resource.CalendarSymbols) { cs.day_names }
   let index = dow - 1
   case width == "wide" || width == "abbreviated" {
-    True -> {
-      let own =
-        lookup_array_at(locales, chain, cal, field, context, width, index)
-      case own {
+    True ->
+      case
+        local_calendar_array(locales, chain, cal, field, context, width, index)
+      {
         Some(value) -> Some(value)
-        None ->
-          case context == "stand-alone" {
-            True ->
-              lookup_array_at(
-                locales,
-                chain,
-                cal,
-                field,
-                "format",
-                width,
-                index,
-              )
-            False -> None
+        None -> {
+          let own =
+            lookup_array_at(locales, chain, cal, field, context, width, index)
+          case own {
+            Some(value) -> Some(value)
+            None ->
+              case context == "stand-alone" {
+                True ->
+                  lookup_array_at(
+                    locales,
+                    chain,
+                    cal,
+                    field,
+                    "format",
+                    width,
+                    index,
+                  )
+                False -> None
+              }
           }
+        }
       }
-    }
     False ->
       case width == "short" {
         True -> {
@@ -884,6 +958,34 @@ fn uncached_get_day_name(
               )
           }
         }
+      }
+  }
+}
+
+fn local_calendar_array(
+  locales: Dict(String, Dict(String, resource.CalendarSymbols)),
+  chain: List(LocaleChainEntry),
+  cal: String,
+  field: fn(resource.CalendarSymbols) ->
+    Option(resource.CalendarField(resource.ContextNames)),
+  context: String,
+  width: String,
+  index: Int,
+) -> Option(String) {
+  case find_leaf(locales, chain, chain, cal, field, Some, 0) {
+    None -> None
+    Some(names) ->
+      case real_leaf_at(pick_width_names(pick_context_names(names, context), width), index) {
+        Some(value) -> Some(value)
+        None ->
+          case context == "stand-alone" {
+            True ->
+              real_leaf_at(
+                pick_width_names(pick_context_names(names, "format"), width),
+                index,
+              )
+            False -> None
+          }
       }
   }
 }

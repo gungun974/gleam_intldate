@@ -122,7 +122,11 @@ fn parse_zoneinfo64(contents: String) {
 }
 
 fn combine64(hi: Int, lo: Int) -> Int {
-  hi * 4_294_967_296 + lo
+  let lo_unsigned = case lo < 0 {
+    True -> lo + 4_294_967_296
+    False -> lo
+  }
+  hi * 4_294_967_296 + lo_unsigned
 }
 
 fn combine_pairs(arr: List(Int)) -> List(Int) {

@@ -2473,12 +2473,28 @@ fn push_sourced_block(
   #(text <> formatted, list.append(parts, mapped))
 }
 
+fn fa_month_interval_collapses(
+  fmt: DateIntervalFormat,
+  field: Option(String),
+) -> Bool {
+  field == Some("month")
+  && uloc.get_language_subtag(Some(fmt.locale_id)) == "fa"
+  && string.contains(fmt.skeleton, "y")
+  && string.contains(fmt.skeleton, "MMM")
+  && !string.contains(fmt.skeleton, "d")
+}
+
 pub fn format(
   fmt: DateIntervalFormat,
   from_side: DateIntervalSide,
   to_side: DateIntervalSide,
 ) -> DateIntervalFormatResult {
-  case greatest_differing_field(from_side.fields, to_side.fields) {
+  let greatest = greatest_differing_field(from_side.fields, to_side.fields)
+  let greatest = case fa_month_interval_collapses(fmt, greatest) {
+    True -> None
+    False -> greatest
+  }
+  case greatest {
     None -> {
       let r =
         render_single(

@@ -71,10 +71,35 @@ fn lookup_supported_locale(
   bundle: bundle.Bundle,
   base: String,
 ) -> Option(String) {
-  first_available_locale(
-    bundle,
-    localechain.locale_chain(bundle.locale_parents, base),
-  )
+  first_available_locale(bundle, best_available_chain(base))
+}
+
+fn best_available_chain(candidate: String) -> List(String) {
+  case candidate {
+    "" -> []
+    _ -> [candidate, ..best_available_chain(truncate_locale(candidate))]
+  }
+}
+
+fn truncate_locale(candidate: String) -> String {
+  case string.split(candidate, "_") {
+    [] | [_] -> ""
+    parts -> {
+      let kept = list.take(parts, list.length(parts) - 1)
+      case kept {
+        [single] -> single
+        _ ->
+          case list.last(kept) {
+            Ok(last) ->
+              case string.length(last) == 1 {
+                True -> string.join(list.take(kept, list.length(kept) - 1), "_")
+                False -> string.join(kept, "_")
+              }
+            Error(_) -> string.join(kept, "_")
+          }
+      }
+    }
+  }
 }
 
 fn best_fit_supported_locale(
@@ -117,6 +142,70 @@ fn replace_locale_base(locale_id: String, base: String) -> String {
   case string.split_once(locale_id, "@") {
     Ok(#(_, keywords)) -> base <> "@" <> keywords
     Error(_) -> base
+  }
+}
+
+fn bare_locale(language: String, script: String) -> String {
+  case script {
+    "" -> language
+    _ -> language <> "_" <> script
+  }
+}
+
+fn borrows_from_other_language(
+  bundle: bundle.Bundle,
+  language: String,
+  script: String,
+) -> Bool {
+  let bare = bare_locale(language, script)
+  let generators = bundle.pattern_generators.locale_to_generator
+  case dict.get(generators, bare) {
+    Error(_) -> False
+    Ok(bare_generator) ->
+      borrows_loop(
+        generators,
+        language,
+        bare_generator,
+        localechain.locale_chain(bundle.locale_parents, bare),
+      )
+  }
+}
+
+fn borrows_loop(
+  generators: Dict(String, Int),
+  language: String,
+  bare_generator: Int,
+  chain: List(String),
+) -> Bool {
+  case chain {
+    [] -> False
+    [ancestor, ..rest] ->
+      case
+        ancestor != localechain.root_locale_name
+        && uloc.get_language_subtag(Some(ancestor)) != language
+      {
+        True ->
+          case dict.get(generators, ancestor) {
+            Ok(generator) -> generator == bare_generator
+            Error(_) -> False
+          }
+        False -> borrows_loop(generators, language, bare_generator, rest)
+      }
+  }
+}
+
+fn display_locale_id(bundle: bundle.Bundle, locale_id: String) -> String {
+  let base = uloc.get_base_name(Some(locale_id))
+  let language = uloc.get_language_subtag(Some(base))
+  let script = uloc.get_script_subtag(Some(base))
+  let region = uloc.get_region_subtag(Some(base))
+  case region == "" {
+    True -> locale_id
+    False ->
+      case borrows_from_other_language(bundle, language, script) {
+        False -> locale_id
+        True -> replace_locale_base(locale_id, bare_locale(language, script))
+      }
   }
 }
 
@@ -256,6 +345,7 @@ fn relative_part_type_name(type_: reldtfmt.RelativeFormatPartType) -> String {
   case type_ {
     reldtfmt.Literal -> "literal"
     reldtfmt.Integer -> "integer"
+    reldtfmt.NumberField(kind) -> kind
   }
 }
 
@@ -337,11 +427,22 @@ pub fn analyze(
   skeleton: String,
   matcher: LocaleMatcher,
   match_hour_field_length: Bool,
+  hour12: Option(Bool),
+  has_hour: Bool,
 ) -> Result(DateTimeAnalysis, IcuError) {
   use context <- result.try(resolve_date_time_context(locale, calendar, matcher))
+  use raw_locale_id <- result.try(raw_resolve_locale(locale, matcher))
 
   let resolved =
-    resolve_analysis(context, calendar, skeleton, match_hour_field_length)
+    resolve_analysis(
+      context,
+      raw_locale_id,
+      calendar,
+      hour12,
+      has_hour,
+      skeleton,
+      match_hour_field_length,
+    )
 
   Ok(DateTimeAnalysis(
     context:,
@@ -367,7 +468,10 @@ type ResolvedAnalysis {
 
 fn resolve_analysis(
   context: DateTimeContext,
+  raw_locale_id: String,
   calendar: String,
+  hour12: Option(Bool),
+  has_hour: Bool,
   skeleton: String,
   match_hour_field_length: Bool,
 ) -> ResolvedAnalysis {
@@ -375,7 +479,19 @@ fn resolve_analysis(
     "analysis:"
     <> context.locale_id
     <> "@"
+    <> raw_locale_id
+    <> "@"
     <> calendar
+    <> "@"
+    <> case hour12 {
+      Some(True) -> "1"
+      Some(False) -> "0"
+      None -> "n"
+    }
+    <> case has_hour {
+      True -> "h"
+      False -> "-"
+    }
     <> "@"
     <> skeleton
     <> "@"
@@ -388,14 +504,25 @@ fn resolve_analysis(
     Error(_) ->
       cache.put_ets(
         key,
-        compute_analysis(context, calendar, skeleton, match_hour_field_length),
+        compute_analysis(
+          context,
+          raw_locale_id,
+          calendar,
+          hour12,
+          has_hour,
+          skeleton,
+          match_hour_field_length,
+        ),
       )
   }
 }
 
 fn compute_analysis(
   context: DateTimeContext,
+  raw_locale_id: String,
   calendar: String,
+  hour12: Option(Bool),
+  has_hour: Bool,
   skeleton: String,
   match_hour_field_length: Bool,
 ) -> ResolvedAnalysis {
@@ -422,18 +549,42 @@ fn compute_analysis(
     "" -> "latn"
     name -> name
   }
-  let relevant_locale_keys = case calendar {
-    "" -> [
-      "calendar",
-      "hours",
-      "numbers",
-    ]
-    _ -> ["hours", "numbers"]
+  let locale_calendar = uloc.get_keyword_value(Some(raw_locale_id), "calendar")
+  let include_calendar = case calendar {
+    "" -> locale_calendar != ""
+    _ ->
+      case
+        uloc.uloc_to_legacy_type(Some(context.bundle), "calendar", calendar)
+      {
+        Some(legacy) -> legacy == locale_calendar && locale_calendar != ""
+        None -> False
+      }
   }
+  let locale_hour_cycle = uloc.get_keyword_value(Some(raw_locale_id), "hours")
+  let include_hours = case locale_hour_cycle {
+    "" -> False
+    _ ->
+      case hour12 {
+        None -> True
+        Some(want12) ->
+          has_hour && is_12_hour_cycle(locale_hour_cycle) == want12
+      }
+  }
+  let relevant_locale_keys =
+    list.append(
+      case include_calendar {
+        True -> ["calendar"]
+        False -> []
+      },
+      case include_hours {
+        True -> ["hours", "numbers"]
+        False -> ["numbers"]
+      },
+    )
   let resolved_locale =
     uloc.to_language_tag(
       context.bundle,
-      context.locale_id,
+      display_locale_id(context.bundle, raw_locale_id),
       relevant_locale_keys,
     )
   let resolved_calendar =
@@ -450,6 +601,10 @@ fn compute_analysis(
     locale: resolved_locale,
     calendar: resolved_calendar,
   )
+}
+
+fn is_12_hour_cycle(hour_cycle: String) -> Bool {
+  hour_cycle == "h11" || hour_cycle == "h12"
 }
 
 fn resolved_calendar_name(calendar: String) -> String {
@@ -565,13 +720,26 @@ pub fn format_range_resolved(
     )
 
   case dtitvfmt.udtitvfmt_result_as_value(wrapper) {
-    None -> Ok(raw_format(context, tz, pattern, from_milliseconds))
+    None ->
+      Ok(normalize_spaces(raw_format(context, tz, pattern, from_milliseconds)))
     Some(result) ->
       case has_interval_span(result) {
-        False -> Ok(raw_format(context, tz, pattern, from_milliseconds))
+        False ->
+          Ok(normalize_spaces(raw_format(
+            context,
+            tz,
+            pattern,
+            from_milliseconds,
+          )))
         True -> Ok(result.formatted)
       }
   }
+}
+
+fn normalize_spaces(text: String) -> String {
+  text
+  |> string.replace("\u{00A0}", " ")
+  |> string.replace("\u{202F}", " ")
 }
 
 pub fn format_range_to_parts(
@@ -722,6 +890,10 @@ pub fn resolve_relative_options(
     name -> name
   }
   let resolved_locale =
-    uloc.to_language_tag(scoped_bundle, locale_id, ["numbers"])
+    uloc.to_language_tag(
+      scoped_bundle,
+      display_locale_id(scoped_bundle, locale_id),
+      ["numbers"],
+    )
   Ok(#(resolved_locale, numbering_system))
 }

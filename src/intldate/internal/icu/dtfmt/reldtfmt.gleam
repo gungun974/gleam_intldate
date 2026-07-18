@@ -27,6 +27,7 @@ pub type RelativeDateTimeData {
 pub type RelativeFormatPartType {
   Literal
   Integer
+  NumberField(kind: String)
 }
 
 pub type RelativeFormatPart {
@@ -485,12 +486,12 @@ pub fn get_plural_rules(
 }
 
 fn direction_key_for_int(intoffset: Int) -> Option(String) {
-  case intoffset {
-    -200 -> Some("-2")
-    -100 -> Some("-1")
-    0 -> Some("0")
-    100 -> Some("1")
-    200 -> Some("2")
+  case intoffset + 200 {
+    0 -> Some("-2")
+    100 -> Some("-1")
+    200 -> Some("0")
+    300 -> Some("1")
+    400 -> Some("2")
     _ -> None
   }
 }
@@ -579,6 +580,7 @@ fn format_numeric_tier(
 
   let decimal_result = decimfmt.format_decimal(bundle, locale_id, magnitude)
   let num_text = decimal_result.text
+  let num_parts = number_relative_parts(decimal_result.parts)
   let plural_rules = get_plural_rules(bundle, locale_id)
   let category =
     plurrule.plural_rules_select(plural_rules, decimal_result.operands)
@@ -592,17 +594,22 @@ fn format_numeric_tier(
       category,
     )
   {
-    None ->
-      RelativeFormatResult(text: num_text, parts: [
-        RelativeFormatPart(
-          type_: Integer,
-          value: num_text,
-          start: 0,
-          end: string.length(num_text),
-        ),
-      ])
-    Some(pattern) -> build_pattern_result(pattern, num_text)
+    None -> RelativeFormatResult(text: num_text, parts: num_parts)
+    Some(pattern) -> build_pattern_result(pattern, num_text, num_parts)
   }
+}
+
+fn number_relative_parts(
+  parts: List(#(String, String)),
+) -> List(RelativeFormatPart) {
+  list.map(parts, fn(part) {
+    let #(kind, value) = part
+    let type_ = case kind {
+      "integer" -> Integer
+      other -> NumberField(other)
+    }
+    RelativeFormatPart(type_:, value:, start: 0, end: string.length(value))
+  })
 }
 
 fn is_negative_zero(x: Float) -> Bool {
@@ -624,6 +631,7 @@ fn find_placeholder_loop(graphemes: List(String), index: Int) -> Option(Int) {
 fn build_pattern_result(
   pattern: String,
   num_text: String,
+  num_parts: List(RelativeFormatPart),
 ) -> RelativeFormatResult {
   case find_placeholder(pattern) {
     None -> RelativeFormatResult(text: pattern, parts: [literal_part(pattern)])
@@ -633,30 +641,14 @@ fn build_pattern_result(
       let pattern_len = string.length(pattern)
       let after = string.slice(pattern, after_start, pattern_len - after_start)
       let text = before <> num_text <> after
-      let #(parts, pos) = case before {
-        "" -> #([], 0)
-        _ -> #([literal_part(before)], string.length(before))
+      let parts = case before {
+        "" -> []
+        _ -> [literal_part(before)]
       }
-      let num_part =
-        RelativeFormatPart(
-          type_: Integer,
-          value: num_text,
-          start: pos,
-          end: pos + string.length(num_text),
-        )
-      let parts = list.append(parts, [num_part])
-      let pos = pos + string.length(num_text)
+      let parts = list.append(parts, num_parts)
       let parts = case after {
         "" -> parts
-        _ ->
-          list.append(parts, [
-            RelativeFormatPart(
-              type_: Literal,
-              value: after,
-              start: pos,
-              end: pos + string.length(after),
-            ),
-          ])
+        _ -> list.append(parts, [literal_part(after)])
       }
       RelativeFormatResult(text:, parts:)
     }

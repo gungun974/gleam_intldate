@@ -36,6 +36,7 @@ pub type LocaleData {
     grouping_used: Bool,
     primary_grouping_size: Int,
     secondary_grouping_size: Int,
+    minimum_grouping_digits: Int,
     minimum_fraction_digits: Int,
     maximum_fraction_digits: Int,
     decimal_separator: String,
@@ -64,7 +65,11 @@ pub type Digits {
 }
 
 pub type FormatDecimalResult {
-  FormatDecimalResult(text: String, operands: PluralOperands)
+  FormatDecimalResult(
+    text: String,
+    parts: List(#(String, String)),
+    operands: PluralOperands,
+  )
 }
 
 pub type DecimalFormat {
@@ -353,6 +358,40 @@ pub fn load_locale_data(bundle: Bundle, locale_id: String) -> LocaleData {
   }
 }
 
+fn resolve_minimum_grouping_digits(bundle: Bundle, base_name: String) -> Int {
+  let data = bundle.number_elements_by_locale
+  let chain = localechain.locale_chain(bundle.locale_parents, base_name)
+  case
+    find_number_element_in_chain(data.locales, chain, "minimumGroupingDigits")
+  {
+    Some(value) ->
+      case int.parse(value) {
+        Ok(n) if n >= 1 -> n
+        _ -> 1
+      }
+    None -> 1
+  }
+}
+
+fn find_number_element_in_chain(
+  locales: dict.Dict(String, dict.Dict(String, String)),
+  chain: List(String),
+  item_key: String,
+) -> Option(String) {
+  case chain {
+    [] -> None
+    [name, ..rest] ->
+      case dict.get(locales, name) {
+        Error(_) -> find_number_element_in_chain(locales, rest, item_key)
+        Ok(elements) ->
+          case dict.get(elements, item_key) {
+            Ok(value) if value != "" -> Some(value)
+            _ -> find_number_element_in_chain(locales, rest, item_key)
+          }
+      }
+  }
+}
+
 fn load_locale_data_uncached(
   bundle: Bundle,
   base_name: String,
@@ -366,6 +405,7 @@ fn load_locale_data_uncached(
     grouping_used: info.grouping_used,
     primary_grouping_size: info.primary_grouping_size,
     secondary_grouping_size: info.secondary_grouping_size,
+    minimum_grouping_digits: resolve_minimum_grouping_digits(bundle, base_name),
     minimum_fraction_digits: info.minimum_fraction_digits,
     maximum_fraction_digits: info.maximum_fraction_digits,
     decimal_separator: option.unwrap(resolved.decimal_separator, "."),
@@ -394,27 +434,32 @@ pub fn round_half_even(number: Float, maximum_fraction_digits: Int) -> Float {
   int.to_float(rounded) /. factor
 }
 
-fn group_integer(
+fn group_integer_parts(
   int_string: String,
   grouping_used: Bool,
   primary_grouping_size: Int,
   secondary_grouping_size: Int,
+  minimum_grouping_digits: Int,
   grouping_separator: String,
-) -> String {
+) -> List(#(String, String)) {
   let len = string.length(int_string)
-  case !grouping_used || len <= primary_grouping_size {
-    True -> int_string
+  case
+    !grouping_used
+    || len <= primary_grouping_size
+    || len < primary_grouping_size + minimum_grouping_digits
+  {
+    True -> [#("integer", int_string)]
     False -> {
-      let result =
+      let last =
         string.slice(
           int_string,
           len - primary_grouping_size,
           primary_grouping_size,
         )
       let rest = string.slice(int_string, 0, len - primary_grouping_size)
-      group_integer_loop(
+      group_integer_parts_loop(
         rest,
-        result,
+        [#("integer", last)],
         secondary_grouping_size,
         grouping_separator,
       )
@@ -422,12 +467,12 @@ fn group_integer(
   }
 }
 
-fn group_integer_loop(
+fn group_integer_parts_loop(
   rest: String,
-  result: String,
+  acc: List(#(String, String)),
   secondary_grouping_size: Int,
   grouping_separator: String,
-) -> String {
+) -> List(#(String, String)) {
   let rest_len = string.length(rest)
   case rest_len > secondary_grouping_size {
     True -> {
@@ -438,17 +483,17 @@ fn group_integer_loop(
           secondary_grouping_size,
         )
       let new_rest = string.slice(rest, 0, rest_len - secondary_grouping_size)
-      group_integer_loop(
+      group_integer_parts_loop(
         new_rest,
-        chunk <> grouping_separator <> result,
+        [#("integer", chunk), #("group", grouping_separator), ..acc],
         secondary_grouping_size,
         grouping_separator,
       )
     }
     False ->
       case rest_len > 0 {
-        True -> rest <> grouping_separator <> result
-        False -> result
+        True -> [#("integer", rest), #("group", grouping_separator), ..acc]
+        False -> acc
       }
   }
 }
@@ -503,14 +548,19 @@ pub fn format_decimal(
     }
     False -> #("", "")
   }
-  let integer_text =
-    group_integer(
+  let integer_parts =
+    group_integer_parts(
       int.to_string(i),
       data.grouping_used,
       data.primary_grouping_size,
       data.secondary_grouping_size,
+      data.minimum_grouping_digits,
       data.grouping_separator,
     )
+  let integer_text =
+    integer_parts
+    |> list.map(fn(p) { p.1 })
+    |> string.concat
   let unsigned_text = case frac_string == "" {
     True -> integer_text
     False -> integer_text <> data.decimal_separator <> frac_string
@@ -519,6 +569,23 @@ pub fn format_decimal(
     True -> data.minus_sign <> unsigned_text
     False -> unsigned_text
   }
+  let fraction_parts = case frac_string == "" {
+    True -> []
+    False -> [#("decimal", data.decimal_separator), #("fraction", frac_string)]
+  }
+  let sign_parts = case is_negative {
+    True -> [#("minusSign", data.minus_sign)]
+    False -> []
+  }
+  let parts =
+    list.append(sign_parts, list.append(integer_parts, fraction_parts))
+    |> list.map(fn(p) {
+      let #(kind, value) = p
+      case kind {
+        "integer" | "fraction" -> #(kind, localize_digits(value, data.digits))
+        _ -> #(kind, value)
+      }
+    })
   let v = string.length(frac_string)
   let f = case v == 0 {
     True -> 0
@@ -531,6 +598,7 @@ pub fn format_decimal(
   }
   FormatDecimalResult(
     text: localize_digits(text, data.digits),
+    parts:,
     operands: plurrule.PluralOperands(
       n: Some(rounded),
       i: Some(int.to_float(i)),

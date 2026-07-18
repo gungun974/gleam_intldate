@@ -167,9 +167,9 @@ fn option_decoder(inner: decode.Decoder(a)) -> decode.Decoder(Option(a)) {
 fn supplemental_data_decoder() -> decode.Decoder(resource.SupplementalData) {
   let fallback =
     resource.SupplementalData(
-      time_data: dict_empty(),
-      week_data: dict_empty(),
-      calendar_preference: dict_empty(),
+      time_data: dict.new(),
+      week_data: dict.new(),
+      calendar_preference: dict.new(),
       japanese_eras: [],
     )
   let decoder = {
@@ -306,7 +306,7 @@ fn week_data_decoder() -> decode.Decoder(#(Int, Int, Int, Int, Int, Int)) {
 }
 
 fn zone_info64_decoder() -> decode.Decoder(resource.ZoneInfo64) {
-  let fallback = resource.ZoneInfo64(dict_empty(), dict_empty(), dict_empty())
+  let fallback = resource.ZoneInfo64(dict.new(), dict.new(), dict.new())
   let decoder = {
     use zones <- decode.field(1, decode.dict(decode.string, zone_decoder()))
     use rules <- decode.field(
@@ -339,7 +339,7 @@ fn zone_info64_decoder() -> decode.Decoder(resource.ZoneInfo64) {
 }
 
 fn zone_decoder() -> decode.Decoder(resource.Zone) {
-  let fallback = resource.Zone(0, dict_empty(), [], None, None)
+  let fallback = resource.Zone(0, dict.new(), [], None, None)
   use value <- decode.then(decode.dynamic)
   case constructor_name(value) {
     Ok("zone") -> {
@@ -425,7 +425,7 @@ fn final_rule_decoder() -> decode.Decoder(resource.FinalRule) {
 }
 
 fn plurals_decoder() -> decode.Decoder(resource.Plurals) {
-  let fallback = resource.Plurals(dict_empty(), dict_empty(), dict_empty())
+  let fallback = resource.Plurals(dict.new(), dict.new(), dict.new())
   let decoder = {
     use locales <- decode.field(1, decode.dict(decode.string, decode.string))
     use locales_ordinals <- decode.field(
@@ -552,7 +552,7 @@ fn plural_rule_decoder() -> decode.Decoder(resource.PluralRule) {
 }
 
 fn numbering_systems_decoder() -> decode.Decoder(resource.NumberingSystems) {
-  let fallback = resource.NumberingSystems(dict_empty())
+  let fallback = resource.NumberingSystems(dict.new())
   let decoder = {
     use numbering_systems <- decode.field(
       1,
@@ -611,12 +611,7 @@ fn numbering_system_decoder() -> decode.Decoder(resource.NumberingSystem) {
 
 fn timezone_types_decoder() -> decode.Decoder(resource.TimezoneTypes) {
   let fallback =
-    resource.TimezoneTypes(
-      dict_empty(),
-      dict_empty(),
-      dict_empty(),
-      dict_empty(),
-    )
+    resource.TimezoneTypes(dict.new(), dict.new(), dict.new(), dict.new())
   let decoder = {
     use type_alias_timezone <- decode.field(
       1,
@@ -693,7 +688,7 @@ fn day_period_decoder() -> decode.Decoder(resource.DayPeriod) {
 }
 
 fn day_period_rules_decoder() -> decode.Decoder(resource.DayPeriodRules) {
-  let fallback = resource.DayPeriodRules(False, False, dict_empty())
+  let fallback = resource.DayPeriodRules(False, False, dict.new())
   let decoder = {
     use has_midnight <- decode.field(1, decode.bool)
     use has_noon <- decode.field(2, decode.bool)
@@ -732,7 +727,7 @@ fn day_period_rules_decoder() -> decode.Decoder(resource.DayPeriodRules) {
 fn day_period_rules_data_decoder() -> decode.Decoder(
   resource.DayPeriodRulesData,
 ) {
-  let fallback = resource.DayPeriodRulesData(dict_empty(), dict_empty())
+  let fallback = resource.DayPeriodRulesData(dict.new(), dict.new())
   let decoder = {
     use locales <- decode.field(1, decode.dict(decode.string, decode.int))
     use rules <- decode.field(
@@ -787,7 +782,7 @@ fn loc_ext_type_decoder() -> decode.Decoder(resource.LocExtType) {
 }
 
 fn loc_ext_key_data_decoder() -> decode.Decoder(resource.LocExtKeyData) {
-  let fallback = resource.LocExtKeyData("", "", dict_empty(), 0)
+  let fallback = resource.LocExtKeyData("", "", dict.new(), 0)
   let decoder = {
     use legacy_id <- decode.field(1, decode.string)
     use bcp_id <- decode.field(2, decode.string)
@@ -827,7 +822,7 @@ fn loc_ext_key_data_decoder() -> decode.Decoder(resource.LocExtKeyData) {
 }
 
 fn locale_parents_decoder() -> decode.Decoder(resource.LocaleParents) {
-  let fallback = resource.LocaleParents(dict_empty(), dict_empty(), [])
+  let fallback = resource.LocaleParents(dict.new(), dict.new(), [])
   let decoder = {
     use overrides <- decode.field(1, decode.dict(decode.string, decode.string))
     use aliases <- decode.field(2, decode.dict(decode.string, decode.string))
@@ -861,7 +856,7 @@ fn locale_parents_decoder() -> decode.Decoder(resource.LocaleParents) {
 }
 
 fn pattern_generators_decoder() -> decode.Decoder(resource.PatternGenerators) {
-  let fallback = resource.PatternGenerators(dict_empty(), dict_empty())
+  let fallback = resource.PatternGenerators(dict.new(), dict.new())
   let decoder = {
     use locale_to_generator <- decode.field(
       1,
@@ -961,8 +956,7 @@ fn metazone_mapping_decoder() -> decode.Decoder(resource.MetazoneMapping) {
 }
 
 fn meta_zones_data_decoder() -> decode.Decoder(resource.MetaZonesData) {
-  let fallback =
-    resource.MetaZonesData(dict_empty(), dict_empty(), dict_empty())
+  let fallback = resource.MetaZonesData(dict.new(), dict.new(), dict.new())
   let decoder = {
     use metazone_info <- decode.field(
       1,
@@ -1005,8 +999,7 @@ fn meta_zones_data_decoder() -> decode.Decoder(resource.MetaZonesData) {
 }
 
 fn zone_strings_locale_decoder() -> decode.Decoder(resource.ZoneStringsLocale) {
-  let fallback =
-    resource.ZoneStringsLocale(dict_empty(), dict_empty(), dict_empty())
+  let fallback = resource.ZoneStringsLocale(dict.new(), dict.new(), dict.new())
   let string_table =
     decode.dict(decode.string, decode.dict(decode.string, decode.string))
   let decoder = {
@@ -1141,10 +1134,7 @@ fn context_names_decoder() -> decode.Decoder(resource.ContextNames) {
 fn width_table_decoder() -> decode.Decoder(resource.WidthTable) {
   let fallback = resource.WidthTable(None, None, None)
   let leaf =
-    calendar_leaf_decoder(
-      decode.dict(decode.string, decode.string),
-      dict_empty(),
-    )
+    calendar_leaf_decoder(decode.dict(decode.string, decode.string), dict.new())
   let decoder = {
     use wide <- decode.field(1, option_decoder(leaf))
     use abbreviated <- decode.field(2, option_decoder(leaf))
@@ -1432,7 +1422,7 @@ fn calendar_symbols_decoder() -> decode.Decoder(resource.CalendarSymbols) {
 }
 
 fn interval_formats_decoder() -> decode.Decoder(resource.IntervalFormats) {
-  let fallback = resource.IntervalFormats(dict_empty(), None)
+  let fallback = resource.IntervalFormats(dict.new(), None)
   let decoder = {
     use patterns <- decode.field(
       1,
@@ -1493,7 +1483,7 @@ fn date_interval_calendar_data_decoder() -> decode.Decoder(
 ) {
   let fallback =
     resource.DateIntervalCalendarData(None, None, None, None, None, None)
-  let interval_formats = resource.IntervalFormats(dict_empty(), None)
+  let interval_formats = resource.IntervalFormats(dict.new(), None)
   let decoder = {
     use interval_formats <- decode.field(
       1,
@@ -1518,14 +1508,14 @@ fn date_interval_calendar_data_decoder() -> decode.Decoder(
       5,
       option_decoder(calendar_field_decoder(
         decode.dict(decode.string, decode.string),
-        dict_empty(),
+        dict.new(),
       )),
     )
     use available_formats <- decode.field(
       6,
       option_decoder(calendar_field_decoder(
         decode.dict(decode.string, available_format_decoder()),
-        dict_empty(),
+        dict.new(),
       )),
     )
     decode.success(resource.DateIntervalCalendarData(
@@ -1564,7 +1554,7 @@ fn date_interval_calendar_data_decoder() -> decode.Decoder(
 
 fn relative_unit_data_decoder() -> decode.Decoder(resource.RelativeUnitData) {
   let fallback =
-    resource.RelativeUnitData(None, dict_empty(), dict_empty(), dict_empty())
+    resource.RelativeUnitData(None, dict.new(), dict.new(), dict.new())
   let decoder = {
     use display_name <- decode.field(1, option_decoder(decode.string))
     use relative <- decode.field(2, decode.dict(decode.string, decode.string))
@@ -1602,7 +1592,7 @@ fn relative_unit_data_decoder() -> decode.Decoder(resource.RelativeUnitData) {
 
 fn relative_field_decoder() -> decode.Decoder(resource.RelativeField) {
   let empty =
-    resource.RelativeUnitData(None, dict_empty(), dict_empty(), dict_empty())
+    resource.RelativeUnitData(None, dict.new(), dict.new(), dict.new())
   let fallback = resource.RelativeFieldValue(empty)
   use value <- decode.then(decode.dynamic)
   case constructor_name(value) {
@@ -1762,8 +1752,4 @@ fn likely_subtags_data_decoder() -> decode.Decoder(resource.LikelySubtagsData) {
       )
     })
   })
-}
-
-fn dict_empty() {
-  dict.new()
 }
