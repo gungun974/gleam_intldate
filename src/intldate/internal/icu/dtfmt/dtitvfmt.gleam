@@ -489,7 +489,7 @@ fn find_first_match_type(
   case rest {
     [] -> None
     [field_j, ..tail] ->
-      case field_i.type_ == field_j.type_ {
+      case field_i.type_ == field_j.type_ && field_i.ch == field_j.ch {
         True -> Some(field_j)
         False -> find_first_match_type(field_i, tail)
       }
@@ -1676,12 +1676,12 @@ pub fn set_separate_date_time_ptn(
                 )
                 False -> #(skeleton, best_skeleton)
               }
+              let has_month =
+                string.contains(date_skeleton, "M")
+                || string.contains(date_skeleton, "L")
+              let has_year = string.contains(date_skeleton, "y")
               let extend_era =
-                fmt.cal_type != "japanese"
-                || {
-                  !string.contains(date_skeleton, "M")
-                  && !string.contains(date_skeleton, "L")
-                }
+                fmt.cal_type != "japanese" || !has_month || has_year
               let year_result =
                 set_interval_pattern_for_field(
                   next_fmt,
@@ -2086,11 +2086,9 @@ fn force_numeric_month_width(pattern: String) -> String {
   |> find_replace_in_pattern("MMMMM", "M")
   |> find_replace_in_pattern("MMMM", "M")
   |> find_replace_in_pattern("MMM", "M")
-  |> find_replace_in_pattern("MM", "M")
   |> find_replace_in_pattern("LLLLL", "L")
   |> find_replace_in_pattern("LLLL", "L")
   |> find_replace_in_pattern("LLL", "L")
-  |> find_replace_in_pattern("LL", "L")
 }
 
 fn add_cyclic_calendar_missing_month_fallback(
@@ -2101,12 +2099,17 @@ fn add_cyclic_calendar_missing_month_fallback(
     && uloc.get_language_subtag(Some(fmt.locale_id)) == "id"
   let has_month =
     string.contains(fmt.skeleton, "M") || string.contains(fmt.skeleton, "L")
+  let has_year =
+    string.contains(fmt.skeleton, "y")
+    || string.contains(fmt.skeleton, "Y")
+    || string.contains(fmt.skeleton, "U")
   let has_hour = list.any(graphemes(fmt.skeleton), is_hour_char)
   let has_day = string.contains(fmt.skeleton, "d")
   let has_second = string.contains(fmt.skeleton, "s")
   case
     needs_indonesian_cyclic_fallback
     && !has_month
+    && has_year
     && has_hour
     && has_day
     && !has_second
@@ -2121,8 +2124,16 @@ fn add_cyclic_calendar_missing_month_fallback(
         |> string.replace("u", "")
         |> string.replace("r", "")
         |> string.replace("U", "")
+      let has_weekday =
+        string.contains(fmt.skeleton, "E")
+        || string.contains(fmt.skeleton, "e")
+        || string.contains(fmt.skeleton, "c")
+      let month_skeleton = case has_weekday {
+        True -> "UMMM"
+        False -> "UMM"
+      }
       let pattern =
-        get_best_pattern(fmt, "UMMM" <> cyclic_skeleton)
+        get_best_pattern(fmt, month_skeleton <> cyclic_skeleton)
         |> force_numeric_month_width
       let patterns =
         set_pattern_info(
@@ -2132,16 +2143,24 @@ fn add_cyclic_calendar_missing_month_fallback(
           Some(pattern),
           dtitvinf.get_default_order(fmt.info),
         )
+      let patterns =
+        set_pattern_info(
+          patterns,
+          "year",
+          None,
+          Some(pattern),
+          dtitvinf.get_default_order(fmt.info),
+        )
       DateIntervalFormat(..fmt, patterns:)
     }
   }
 }
 
-fn add_mongolian_chinese_interval_grammar(
+fn add_mongolian_cyclic_interval_grammar(
   fmt: DateIntervalFormat,
 ) -> DateIntervalFormat {
   let needs_interval_grammar =
-    fmt.cal_type == "chinese"
+    { fmt.cal_type == "chinese" || fmt.cal_type == "dangi" }
     && uloc.get_language_subtag(Some(fmt.locale_id)) == "mn"
     && string.contains(fmt.skeleton, "U")
     && string.contains(fmt.skeleton, "MMMM")
@@ -2814,7 +2833,7 @@ pub fn create_date_interval_format(
     )
   initialize_pattern(with_pattern)
   |> add_cyclic_calendar_missing_month_fallback
-  |> add_mongolian_chinese_interval_grammar
+  |> add_mongolian_cyclic_interval_grammar
 }
 
 pub fn date_interval_format_set_time_zone(

@@ -455,6 +455,31 @@ pub fn format_range_japanese_explicit_month_does_not_add_era_or_year_test() {
   assert result == "czw., 23 sierpnia – czw., 26 listopada"
 }
 
+pub fn format_range_to_parts_japanese_default_cross_era_test() {
+  let assert Ok(start) = timestamp.parse_rfc3339("1988-12-12T10:13:17Z")
+  let assert Ok(end) = timestamp.parse_rfc3339("1991-09-27T04:46:42Z")
+  let config =
+    intldate.new()
+    |> intldate.with_calendar(intldate.CalendarJapanese)
+
+  let parts =
+    intldate.format_range_to_parts(
+      date_start: start,
+      date_end: end,
+      time_zone: option.Some("Asia/Kolkata"),
+      locale: option.Some("en-AU"),
+      config:,
+    )
+
+  assert values_and_sources(parts, intldate.DateTimePartEra)
+    == [
+      #("S", intldate.DateTimePartSourceStartRange),
+      #("H", intldate.DateTimePartSourceEndRange),
+    ]
+  assert parts |> list.map(fn(part) { part.value }) |> string.concat
+    == "12/12/63 S – 27/09/3 H"
+}
+
 pub fn format_range_chinese_adds_month_without_losing_cyclic_year_test() {
   let assert Ok(start) = timestamp.parse_rfc3339("1976-06-25T15:56:00Z")
   let assert Ok(end) = timestamp.parse_rfc3339("1976-12-10T22:05:00Z")
@@ -499,6 +524,50 @@ pub fn format_range_chinese_time_only_uses_numeric_date_fallback_test() {
   assert result == "49-4-4, 3 AM – 49-9-5, 10 PM"
 }
 
+pub fn format_range_indonesian_chinese_missing_month_keeps_numeric_width_test() {
+  let assert Ok(start) = timestamp.parse_rfc3339("1989-03-17T14:26:55Z")
+  let assert Ok(end) = timestamp.parse_rfc3339("1990-08-31T15:20:30Z")
+
+  let result =
+    intldate.format_range(
+      date_start: start,
+      date_end: end,
+      time_zone: option.Some("America/New_York"),
+      locale: option.Some("id-ID"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarChinese)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_day(intldate.DayNumeric)
+        |> intldate.with_hour(intldate.Hour2Digit)
+        |> intldate.with_format_matcher(intldate.FormatMatcherBasic)
+        |> intldate.with_hour12(True),
+    )
+
+  assert result == "ji-si 02-10, 9 AM – geng-wu 07-12, 11 AM"
+}
+
+pub fn format_range_indonesian_chinese_without_year_keeps_related_year_test() {
+  let assert Ok(start) = timestamp.parse_rfc3339("1991-11-18T00:05:23Z")
+  let assert Ok(end) = timestamp.parse_rfc3339("1994-01-14T18:08:04Z")
+
+  let result =
+    intldate.format_range(
+      date_start: start,
+      date_end: end,
+      time_zone: option.Some("Antarctica/Troll"),
+      locale: option.Some("id-ID"),
+      config: intldate.new()
+        |> intldate.with_calendar(intldate.CalendarChinese)
+        |> intldate.with_weekday(intldate.WeekdayShort)
+        |> intldate.with_day(intldate.Day2Digit)
+        |> intldate.with_hour(intldate.HourNumeric)
+        |> intldate.with_format_matcher(intldate.FormatMatcherBasic)
+        |> intldate.with_hour12(True),
+    )
+
+  assert result == "1991-10-13, Sen, 12 AM – 1993-12-03, Jum, 6 PM"
+}
+
 pub fn format_range_mongolian_chinese_uses_interval_grammar_test() {
   let assert Ok(start) = timestamp.parse_rfc3339("1984-10-22T14:42:06Z")
   let assert Ok(end) = timestamp.parse_rfc3339("1985-09-18T11:38:38Z")
@@ -525,6 +594,33 @@ pub fn format_range_mongolian_chinese_uses_interval_grammar_test() {
 
   assert result
     == "1984(jia-zi) оны 9-р сар сарын 28, Да 18:12:06 (Ираны стандарт цаг) – 1985(yi-chou) оны 8-р сар сарын 4, Лх 15:08:38 (Ираны стандарт цаг)"
+}
+
+pub fn format_range_mongolian_dangi_uses_interval_grammar_test() {
+  let assert Ok(start) = timestamp.parse_rfc3339("2021-12-24T09:26:45Z")
+  let assert Ok(end) = timestamp.parse_rfc3339("2023-08-31T01:13:42Z")
+
+  let result =
+    intldate.format_range(
+      date_start: start,
+      date_end: end,
+      time_zone: option.Some("America/New_York"),
+      locale: option.Some("mn-MN"),
+      config: intldate.new()
+        |> intldate.with_locale_matcher(intldate.LocaleMatcherBestFit)
+        |> intldate.with_calendar(intldate.CalendarDangi)
+        |> intldate.with_weekday(intldate.WeekdayShort)
+        |> intldate.with_year(intldate.YearNumeric)
+        |> intldate.with_month(intldate.MonthLong)
+        |> intldate.with_day(intldate.DayNumeric)
+        |> intldate.with_hour(intldate.HourNumeric)
+        |> intldate.with_minute(intldate.Minute2Digit)
+        |> intldate.with_format_matcher(intldate.FormatMatcherBestFit)
+        |> intldate.with_hour12(True),
+    )
+
+  assert result
+    == "2021(xin-chou) оны 11-р сар сарын 21, Ба 4:26 ү.ө. – 2023(gui-mao) оны 7-р сар сарын 15, Лх 9:13 ү.х."
 }
 
 fn values_and_sources(
@@ -763,4 +859,41 @@ pub fn format_range_to_parts_chinese_cyclic_year_sources_test() {
       #("5", intldate.DateTimePartSourceStartRange),
       #("10", intldate.DateTimePartSourceEndRange),
     ]
+}
+
+pub fn format_range_to_parts_chinese_missing_month_cross_year_test() {
+  let assert Ok(start) = timestamp.parse_rfc3339("2022-03-06T14:37:11Z")
+  let assert Ok(end) = timestamp.parse_rfc3339("2025-01-03T08:03:12Z")
+  let config =
+    intldate.new()
+    |> intldate.with_calendar(intldate.CalendarChinese)
+    |> intldate.with_weekday(intldate.WeekdayNarrow)
+    |> intldate.with_year(intldate.Year2Digit)
+    |> intldate.with_day(intldate.DayNumeric)
+    |> intldate.with_hour(intldate.Hour2Digit)
+    |> intldate.with_time_zone_name(intldate.TimeZoneNameLongGeneric)
+    |> intldate.with_hour12(False)
+
+  let parts =
+    intldate.format_range_to_parts(
+      date_start: start,
+      date_end: end,
+      time_zone: option.Some("Europe/London"),
+      locale: option.Some("id-ID"),
+      config:,
+    )
+
+  assert values_and_sources(parts, intldate.DateTimePartRelatedYear) == []
+  assert values_and_sources(parts, intldate.DateTimePartYearName)
+    == [
+      #("ren-yin", intldate.DateTimePartSourceStartRange),
+      #("jia-chen", intldate.DateTimePartSourceEndRange),
+    ]
+  assert values_and_sources(parts, intldate.DateTimePartMonth)
+    == [
+      #("2", intldate.DateTimePartSourceStartRange),
+      #("12", intldate.DateTimePartSourceEndRange),
+    ]
+  assert parts |> list.map(fn(part) { part.value }) |> string.concat
+    == "M, ren-yin 2 4, 14 Waktu Inggris Raya – J, jia-chen 12 4, 08 Waktu Inggris Raya"
 }

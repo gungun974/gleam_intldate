@@ -1297,6 +1297,28 @@ pub fn format_year_2digit_millenium_fr_fr_test() {
   assert result == "01/01/00"
 }
 
+pub fn format_range_fa_ir_hebrew_narrow_month_distinct_fields_collapses_test() {
+  let assert Ok(start) = timestamp.parse_rfc3339("2007-10-17T02:27:54+00:00")
+  let assert Ok(end) = timestamp.parse_rfc3339("2008-08-04T07:51:58+00:00")
+
+  let result =
+    intldate.format_range(
+      date_start: start,
+      date_end: end,
+      time_zone: option.Some("UTC"),
+      locale: option.Some("fa-IR"),
+      config: intldate.new()
+        |> intldate.with_locale_matcher(intldate.LocaleMatcherBestFit)
+        |> intldate.with_calendar(intldate.CalendarHebrew)
+        |> intldate.with_year(intldate.Year2Digit)
+        |> intldate.with_month(intldate.MonthNarrow)
+        |> intldate.with_format_matcher(intldate.FormatMatcherBestFit)
+        |> intldate.with_hour12(False),
+    )
+
+  assert result == "ح ۶۸ تقویم عبری"
+}
+
 pub fn format_th_th_date_long_buddhist_year_test() {
   let assert Ok(date) = timestamp.parse_rfc3339("2026-02-24T13:48:22+00:00")
   let result =
