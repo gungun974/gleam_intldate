@@ -8,6 +8,8 @@ On JavaScript it delegates to the native `Intl.DateTimeFormat()`, while on Erlan
 it relies on a pure Gleam reimplementation that mirrors the same behaviour, so you
 get consistent results whichever target you compile to.
 
+Based on **ICU 78.3** data, which includes **CLDR 78.2** and **tzdata 2026a** (2026-mar).
+
 [![Package Version](https://img.shields.io/hexpm/v/intldate)](https://hex.pm/packages/intldate)
 [![JavaScript Compatible](https://img.shields.io/badge/target-javascript-f3e155)](https://en.wikipedia.org/wiki/JavaScript)
 [![Erlang Compatible](https://img.shields.io/badge/target-erlang-a90533)](https://www.erlang.org/)
