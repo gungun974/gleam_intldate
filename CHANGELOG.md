@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [2.0.0] - 23/07/2026
+
 - Full Erlang target support alongside JavaScript, backed by a native Gleam
   recreation of ICU 78.3's own algorithms and data
 - Add proper optional error handling API with `try_*` variants (`try_format`,
